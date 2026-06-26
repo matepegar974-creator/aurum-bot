@@ -4,7 +4,6 @@ import os
 
 app = Flask(__name__, static_folder='static')
 
-# Allow CORS manually
 @app.after_request
 def add_cors(response):
     response.headers['Access-Control-Allow-Origin'] = '*'
@@ -33,7 +32,7 @@ def get_signal():
                 'anthropic-version': '2023-06-01'
             },
             json={
-                'model': 'claude-haiku-4-5-20251001',
+                'model': 'claude-haiku-4-5',
                 'max_tokens': 1000,
                 'messages': [{'role': 'user', 'content': prompt}]
             },
