@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify, send_from_directory
 import requests
 import os
+import traceback
 
 app = Flask(__name__, static_folder='static')
 
@@ -32,23 +33,26 @@ def get_signal():
                 'anthropic-version': '2023-06-01'
             },
             json={
-                'model': 'claude-haiku-4-5',
+                'model': 'claude-haiku-4-5-20251001',
                 'max_tokens': 1000,
                 'messages': [{'role': 'user', 'content': prompt}]
             },
             timeout=30
         )
         if response.status_code != 200:
-            return jsonify({'error': 'API error ' + str(response.status_code)}), 500
+            error_body = response.text
+            print(f"Anthropic API error {response.status_code}: {error_body}")
+            return jsonify({'error': f'API error {response.status_code}: {error_body}'}), 500
         result = response.json()
         text = ''.join([b.get('text', '') for b in result.get('content', [])])
         return jsonify({'text': text})
     except Exception as e:
+        print(f"Exception: {traceback.format_exc()}")
         return jsonify({'error': str(e)}), 500
 
-@app.route('/health')
+@app.route('/health', methods=['GET'])
 def health():
-    return jsonify({'status': 'ok'})
+    return jsonify({'status': 'ok', 'key_set': bool(ANTHROPIC_API_KEY)})
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
