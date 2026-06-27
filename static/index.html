@@ -946,6 +946,9 @@ async function askClaude(priceData, dxy, realNews, ri, wti, bond) {
 
   const dxyText = dxy ? `- Índice del Dólar (DXY): ${dxy.value.toFixed(2)} (${dxy.change >= 0 ? '+' : ''}${dxy.change.toFixed(2)}) — ${dxy.change < 0 ? 'DXY bajando = favorable para el oro' : 'DXY subiendo = presión sobre el oro'}` : '';
 
+  
+  const riLine = ri ? `\n- RSI(14) REAL: ${ri.rsi ? ri.rsi.toFixed(2) : 'N/A'}\n- MACD REAL: ${ri.macdHist ? ri.macdHist.toFixed(4) : 'N/A'} (${ri.macdSignal || 'N/A'})` : '';
+  const macroLine = `\n- Petróleo WTI: $${wti ? wti.value.toFixed(2) : 'N/A'} (${wti && wti.change >= 0 ? '+' : ''}${wti ? wti.change.toFixed(2) : '0'})\n- Bono EEUU 10Y: ${bond ? bond.value.toFixed(2) : 'N/A'}% (${bond && bond.change >= 0 ? '+' : ''}${bond ? bond.change.toFixed(3) : '0'})`;
   const prompt = `Eres un analista experto en trading de oro (XAU/USD). Analiza todos los datos disponibles y genera una señal de trading precisa.
 
 DATOS DE PRECIO (${new Date().toLocaleString('es')}):
@@ -985,8 +988,6 @@ Responde ÚNICAMENTE en JSON válido, sin texto extra ni backticks:
   "timeframe": "intradía" o "corto plazo (1-4h)" o "swing (2-5 días)",
   "dxyImpact": "favorable" o "desfavorable" o "neutral"
 }`;
-  const riLine = ri ? `\n- RSI(14) REAL: ${ri.rsi ? ri.rsi.toFixed(2) : 'N/A'}\n- MACD REAL: ${ri.macdHist ? ri.macdHist.toFixed(4) : 'N/A'} (${ri.macdSignal || 'N/A'})` : '';
-  const macroLine = `\n- Petróleo WTI: $${wti ? wti.value.toFixed(2) : 'N/A'} (${wti && wti.change >= 0 ? '+' : ''}${wti ? wti.change.toFixed(2) : '0'})\n- Bono EEUU 10Y: ${bond ? bond.value.toFixed(2) : 'N/A'}% (${bond && bond.change >= 0 ? '+' : ''}${bond ? bond.change.toFixed(3) : '0'})`;
 
   // Call backend proxy (works online 24/7)
   const backendUrl = window.location.origin + '/api/signal';
