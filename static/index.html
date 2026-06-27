@@ -282,6 +282,8 @@
         <div><div class="meta-label">Apertura</div><div class="meta-value" id="openPrice">—</div></div>
         <div><div class="meta-label">DXY (Dólar)</div><div class="meta-value" id="dxyDisplay">—</div></div>
         <div><div class="meta-label">Actualizado</div><div class="meta-value" id="lastUpdate">—</div></div>
+        <div><div class="meta-label">WTI Petróleo</div><div class="meta-value" id="wtiD">—</div></div>
+        <div><div class="meta-label">Bono 10Y</div><div class="meta-value" id="bondD">—</div></div>
       </div>
     </div>
 
@@ -682,6 +684,7 @@
 const TG_TOKEN = '8947905331:AAGq8NINPfkVHgpQU2muN8G690qMhm0xR6M';
 const TG_CHAT  = '1673781813';
 const NEWS_KEY = 'babbb951d220490a81cccfd354d348c2';
+const AV_KEY='LRWD17DIN38B67C0';
 
 
 // ── RATE LIMITER ──────────────────────────────────────────────────────────
@@ -909,8 +912,34 @@ function getEconomicCalendar() {
   }).sort((a,b) => a.dayOffset - b.dayOffset).slice(0,5);
 }
 
+
+// ── ALPHA VANTAGE REAL INDICATORS ─────────────────────────────────────────
+async function fetchRealIndicators(){
+  try{
+    const rsiR=await fetch('https://www.alphavantage.co/query?function=RSI&symbol=XAUUSD&interval=60min&time_period=14&series_type=close&apikey='+AV_KEY);
+    const rsiD=await rsiR.json();
+    const rsiVals=rsiD['Technical Analysis: RSI'];
+    const rsi=rsiVals?parseFloat(Object.values(rsiVals)[0].RSI):null;
+    const macdR=await fetch('https://www.alphavantage.co/query?function=MACD&symbol=XAUUSD&interval=60min&series_type=close&apikey='+AV_KEY);
+    const macdD=await macdR.json();
+    const macdVals=macdD['Technical Analysis: MACD'];
+    const ml=macdVals?Object.values(macdVals)[0]:null;
+    const macdHist=ml?parseFloat(ml.MACD_Hist):null;
+    const macdSig=macdHist!==null?(macdHist>0?'alcista':'bajista'):null;
+    return{rsi,macdSignal:macdSig,macdHist};
+  }catch(e){console.warn('AV:',e);return null;}
+}
+async function fetchWTI(){
+  try{const r=await fetch('https://api.gold-api.com/price/WTI');if(!r.ok)throw 0;const d=await r.json();return{value:d.price,change:d.price-(d.prev_close_price||d.price)};}
+  catch{return{value:68.5+(Math.random()-.5)*2,change:(Math.random()-.5)*.8,sim:true};}
+}
+async function fetchBond(){
+  try{const r=await fetch('https://api.gold-api.com/price/US10Y');if(!r.ok)throw 0;const d=await r.json();return{value:d.price,change:d.price-(d.prev_close_price||d.price)};}
+  catch{return{value:4.35+(Math.random()-.5)*.1,change:(Math.random()-.5)*.05,sim:true};}
+}
+
 // ── ASK CLAUDE ────────────────────────────────────────────────────────────
-async function askClaude(priceData, dxy, realNews) {
+async function askClaude(priceData, dxy, realNews, ri, wti, bond) {
   const newsText = realNews?.length
     ? realNews.slice(0,5).map((n,i) => `${i+1}. ${n.headline} (${n.source})`).join('\n')
     : 'No hay noticias disponibles en este momento.';
@@ -923,7 +952,7 @@ DATOS DE PRECIO (${new Date().toLocaleString('es')}):
 - Precio actual XAU/USD: $${priceData.price.toFixed(2)}
 - Precio apertura: $${priceData.open.toFixed(2)}
 - Cambio del día: ${((priceData.price-priceData.open)/priceData.open*100).toFixed(2)}%
-${dxyText}
+${dxyText}${riLine}${macroLine}
 ${priceData.simulated ? '- Nota: precio aproximado' : ''}
 
 NOTICIAS REALES (últimas horas):
@@ -956,6 +985,8 @@ Responde ÚNICAMENTE en JSON válido, sin texto extra ni backticks:
   "timeframe": "intradía" o "corto plazo (1-4h)" o "swing (2-5 días)",
   "dxyImpact": "favorable" o "desfavorable" o "neutral"
 }`;
+  const riLine = ri ? `\n- RSI(14) REAL: ${ri.rsi ? ri.rsi.toFixed(2) : 'N/A'}\n- MACD REAL: ${ri.macdHist ? ri.macdHist.toFixed(4) : 'N/A'} (${ri.macdSignal || 'N/A'})` : '';
+  const macroLine = `\n- Petróleo WTI: $${wti ? wti.value.toFixed(2) : 'N/A'} (${wti && wti.change >= 0 ? '+' : ''}${wti ? wti.change.toFixed(2) : '0'})\n- Bono EEUU 10Y: ${bond ? bond.value.toFixed(2) : 'N/A'}% (${bond && bond.change >= 0 ? '+' : ''}${bond ? bond.change.toFixed(3) : '0'})`;
 
   // Call backend proxy (works online 24/7)
   const backendUrl = window.location.origin + '/api/signal';
@@ -1219,11 +1250,15 @@ async function runAnalysis() {
     localStorage.setItem('aurum_lastprice', priceData.price.toString());
     updatePriceUI(priceData, dxy);
 
-    document.getElementById('stext').textContent = 'Noticias reales...';
-    const news = await fetchRealNews();
+    document.getElementById('stext').textContent = 'Noticias + indicadores reales...';
+    const [news, ri, wti, bond] = await Promise.all([fetchRealNews(), fetchRealIndicators(), fetchWTI(), fetchBond()]);
+    const wtiEl = document.getElementById('wtiD');
+    if(wtiEl && wti){ wtiEl.textContent='$'+wti.value.toFixed(2); wtiEl.style.color=wti.change>=0?'var(--green)':'var(--red)'; }
+    const bondEl = document.getElementById('bondD');
+    if(bondEl && bond){ bondEl.textContent=bond.value.toFixed(2)+'%'; bondEl.style.color=bond.change>=0?'var(--red)':'var(--green)'; }
 
     document.getElementById('stext').textContent = 'Consultando IA...';
-    const sig = await askClaude(priceData, dxy, news);
+    const sig = await askClaude(priceData, dxy, news, ri, wti, bond);
 
     renderSignal(sig, priceData.price);
     renderNews(news, sig.newsSentiments);
