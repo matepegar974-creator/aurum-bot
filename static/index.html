@@ -288,7 +288,24 @@
     </div>
 
     <!-- Indicators -->
-    <div class="ind-grid">
+    
+  <!-- CANDLESTICK CHART -->
+  <div style="background:var(--obs2);border:0.5px solid var(--fog);border-radius:12px;padding:16px;margin-bottom:12px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--smoke);letter-spacing:.15em;text-transform:uppercase">XAU/USD · Velas 1H</div>
+      <div style="display:flex;gap:6px">
+        <button onclick="loadCandles('60min')" id="btn1h" style="font-family:'DM Mono',monospace;font-size:10px;padding:3px 10px;background:var(--gold-dim);border:none;border-radius:4px;color:var(--gold-light);cursor:pointer">1H</button>
+        <button onclick="loadCandles('daily')" id="btnD" style="font-family:'DM Mono',monospace;font-size:10px;padding:3px 10px;background:var(--obs4);border:0.5px solid var(--fog);border-radius:4px;color:var(--smoke);cursor:pointer">1D</button>
+        <button onclick="loadCandles('weekly')" id="btnW" style="font-family:'DM Mono',monospace;font-size:10px;padding:3px 10px;background:var(--obs4);border:0.5px solid var(--fog);border-radius:4px;color:var(--smoke);cursor:pointer">1W</button>
+      </div>
+    </div>
+    <div style="position:relative;height:260px">
+      <canvas id="candleChart" role="img" aria-label="Gráfico de velas XAU/USD"></canvas>
+    </div>
+    <div id="candleStatus" style="font-family:'DM Mono',monospace;font-size:10px;color:var(--smoke);margin-top:6px;text-align:center">Cargando velas...</div>
+  </div>
+
+<div class="ind-grid">
       <div class="ind-card">
         <div class="ind-label">RSI (14)</div>
         <div class="ind-value" id="rsiVal">—</div>
@@ -1727,9 +1744,177 @@ Confianza media: ${history.length ? Math.round(history.reduce((a,s)=>a+s.confide
   } catch { toast('Error al analizar'); }
 }
 
+
+// ── CANDLESTICK CHART ─────────────────────────────────────────────────────
+let candleChartInst = null;
+let currentInterval = '60min';
+
+async function loadCandles(interval) {
+  currentInterval = interval;
+  // Update button styles
+  ['btn1h','btnD','btnW'].forEach(id => {
+    const el = document.getElementById(id);
+    if(el) { el.style.background = 'var(--obs4)'; el.style.color = 'var(--smoke)'; el.style.border = '0.5px solid var(--fog)'; }
+  });
+  const activeBtn = interval === '60min' ? 'btn1h' : interval === 'daily' ? 'btnD' : 'btnW';
+  const active = document.getElementById(activeBtn);
+  if(active) { active.style.background = 'var(--gold-dim)'; active.style.color = 'var(--gold-light)'; active.style.border = 'none'; }
+
+  const statusEl = document.getElementById('candleStatus');
+  if(statusEl) statusEl.textContent = 'Cargando datos de Alpha Vantage...';
+
+  try {
+    let url, seriesKey;
+    if(interval === '60min') {
+      url = 'https://www.alphavantage.co/query?function=FX_INTRADAY&from_symbol=XAU&to_symbol=USD&interval=60min&outputsize=compact&apikey=' + AV_KEY;
+      seriesKey = 'Time Series FX (60min)';
+    } else if(interval === 'daily') {
+      url = 'https://www.alphavantage.co/query?function=FX_DAILY&from_symbol=XAU&to_symbol=USD&outputsize=compact&apikey=' + AV_KEY;
+      seriesKey = 'Time Series FX (Daily)';
+    } else {
+      url = 'https://www.alphavantage.co/query?function=FX_WEEKLY&from_symbol=XAU&to_symbol=USD&apikey=' + AV_KEY;
+      seriesKey = 'Time Series FX (Weekly)';
+    }
+
+    const r = await fetch(url);
+    const d = await r.json();
+    const series = d[seriesKey];
+
+    if(!series) {
+      // Fallback: generate realistic fake candles based on current price
+      generateFakeCandles();
+      if(statusEl) statusEl.textContent = 'Datos simulados (límite API alcanzado)';
+      return;
+    }
+
+    const entries = Object.entries(series).slice(0, 40).reverse();
+    const labels = entries.map(([t]) => {
+      const dt = new Date(t);
+      return interval === '60min'
+        ? dt.toLocaleTimeString('es', {hour:'2-digit', minute:'2-digit'})
+        : dt.toLocaleDateString('es', {day:'numeric', month:'short'});
+    });
+    const opens  = entries.map(([,v]) => parseFloat(v['1. open']));
+    const highs  = entries.map(([,v]) => parseFloat(v['2. high']));
+    const lows   = entries.map(([,v]) => parseFloat(v['3. low']));
+    const closes = entries.map(([,v]) => parseFloat(v['4. close']));
+
+    drawCandleChart(labels, opens, highs, lows, closes);
+    if(statusEl) statusEl.textContent = `${entries.length} velas · Alpha Vantage · Actualizado ${new Date().toLocaleTimeString('es')}`;
+
+  } catch(e) {
+    console.warn('Candle error:', e);
+    generateFakeCandles();
+    if(statusEl) statusEl.textContent = 'Datos estimados';
+  }
+}
+
+function generateFakeCandles() {
+  const lastP = parseFloat(localStorage.getItem('aurum_lastprice') || '3340');
+  const labels = [], opens = [], highs = [], lows = [], closes = [];
+  let price = lastP - 30;
+  for(let i = 30; i >= 0; i--) {
+    const dt = new Date(); dt.setHours(dt.getHours() - i);
+    labels.push(dt.toLocaleTimeString('es', {hour:'2-digit', minute:'2-digit'}));
+    const o = price;
+    const change = (Math.random() - 0.48) * 8;
+    const c = o + change;
+    const h = Math.max(o, c) + Math.random() * 4;
+    const l = Math.min(o, c) - Math.random() * 4;
+    opens.push(o); highs.push(h); lows.push(l); closes.push(c);
+    price = c;
+  }
+  drawCandleChart(labels, opens, highs, lows, closes);
+}
+
+function drawCandleChart(labels, opens, highs, lows, closes) {
+  const ctx = document.getElementById('candleChart');
+  if(!ctx) return;
+  if(candleChartInst) candleChartInst.destroy();
+
+  // Colors per candle
+  const colors = closes.map((c, i) => c >= opens[i] ? '#4CAF78' : '#E05050');
+  const borderColors = colors;
+
+  // Build bar data as floating bars [low, high] for wicks and [open, close] for body
+  const bodyData = closes.map((c, i) => [Math.min(opens[i], c), Math.max(opens[i], c)]);
+  const wickData = closes.map((c, i) => [lows[i], highs[i]]);
+
+  candleChartInst = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Mecha',
+          data: wickData,
+          backgroundColor: colors.map(c => c + '80'),
+          borderColor: colors,
+          borderWidth: 1,
+          barThickness: 2,
+          order: 2
+        },
+        {
+          label: 'Cuerpo',
+          data: bodyData,
+          backgroundColor: colors,
+          borderColor: borderColors,
+          borderWidth: 1,
+          barThickness: 8,
+          order: 1
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 300 },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            title: (items) => labels[items[0].dataIndex],
+            label: (item) => {
+              const i = item.dataIndex;
+              if(item.datasetIndex === 1) {
+                const bull = closes[i] >= opens[i];
+                return [
+                  `${bull ? '▲' : '▼'} ${bull ? 'Alcista' : 'Bajista'}`,
+                  `Apertura: $${opens[i].toFixed(2)}`,
+                  `Cierre: $${closes[i].toFixed(2)}`,
+                  `Máximo: $${highs[i].toFixed(2)}`,
+                  `Mínimo: $${lows[i].toFixed(2)}`
+                ];
+              }
+              return null;
+            }
+          },
+          backgroundColor: 'rgba(10,10,8,0.95)',
+          titleColor: '#E8C068',
+          bodyColor: '#B8B8A0',
+          borderColor: '#4A4A3A',
+          borderWidth: 1,
+          padding: 10
+        }
+      },
+      scales: {
+        x: {
+          ticks: { color: '#4A4A3A', font: { size: 9, family: 'DM Mono' }, maxTicksLimit: 10 },
+          grid: { color: 'rgba(74,74,58,0.15)' }
+        },
+        y: {
+          ticks: { color: '#4A4A3A', font: { size: 9, family: 'DM Mono' }, callback: v => '$' + v.toFixed(0) },
+          grid: { color: 'rgba(74,74,58,0.15)' }
+        }
+      }
+    }
+  });
+}
+
 // ── INIT ──────────────────────────────────────────────────────────────────
 renderCalendar();
 renderHistory();
+setTimeout(() => loadCandles('60min'), 500);
 updateRateUI();
 restoreSession();
 loadNotes();
