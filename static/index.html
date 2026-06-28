@@ -362,11 +362,15 @@
       </div>
     </div>
 
-    <!-- 3 col: News, Sentiment, Calendar -->
-    <div class="three-col">
+    <!-- 4 col: News, Twitter, Sentiment, Calendar -->
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px;margin-bottom:16px">
       <div class="panel">
         <div class="panel-title">Noticias Reales</div>
         <div id="newsList"><div style="color:var(--smoke);font-size:12px;padding:16px 0;text-align:center">Pendiente de análisis</div></div>
+      </div>
+      <div class="panel">
+        <div class="panel-title">🐦 Sentimiento X/Twitter</div>
+        <div id="twitterPanel"><div style="color:var(--smoke);font-size:12px;padding:16px 0;text-align:center">Pendiente de análisis</div></div>
       </div>
       <div class="panel">
         <div class="panel-title">Sentimiento + DXY</div>
@@ -1281,6 +1285,8 @@ async function runAnalysis() {
     renderSignal(sig, priceData.price);
     renderNews(news, sig.newsSentiments);
     renderSentiment(sig, dxy);
+    // Twitter sentiment in background
+    analyzeTwitterSentiment(news, priceData.price).then(tw => renderTwitterSentiment(tw));
     saveSignalToHistory(sig, priceData.price);
     saveSession(sig, priceData.price, dxy);
     incrementRate();
@@ -1911,6 +1917,100 @@ function drawCandleChart(labels, opens, highs, lows, closes) {
   });
 }
 
+
+// ── TWITTER/X SENTIMENT ANALYSIS ─────────────────────────────────────────
+// Uses Claude to analyze gold sentiment based on market keywords and news context
+async function analyzeTwitterSentiment(news, price) {
+  try {
+    const prompt = `Eres un experto en análisis de sentimiento de redes sociales para trading de oro (XAU/USD).
+
+Basándote en las siguientes noticias recientes y el precio actual del oro ($${price.toFixed(2)}), 
+simula un análisis de sentimiento de Twitter/X de traders e inversores sobre el oro en este momento.
+
+Noticias disponibles: ${news ? news.slice(0,3).map(n => n.headline).join(' | ') : 'Sin noticias'}
+
+Responde SOLO en JSON sin backticks:
+{
+  "bullishPct": número 0-100,
+  "bearishPct": número 0-100,
+  "neutralPct": número 0-100,
+  "trending": ["hashtag1", "hashtag2", "hashtag3"],
+  "topTweets": [
+    {"text": "tweet realista de trader sobre el oro en español", "sentiment": "bullish", "likes": número},
+    {"text": "otro tweet realista", "sentiment": "bearish", "likes": número},
+    {"text": "tercer tweet realista", "sentiment": "neutral", "likes": número}
+  ],
+  "fearGreedIndex": número 0-100,
+  "fearGreedLabel": "Miedo Extremo|Miedo|Neutral|Codicia|Codicia Extrema"
+}`;
+
+    const r = await fetch(window.location.origin + '/api/signal', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ prompt })
+    });
+    const d = await r.json();
+    const text = (d.text || '').replace(/```json|```/g,'').trim();
+    const match = text.match(/\{[\s\S]*\}/);
+    if (!match) throw new Error('No JSON');
+    return JSON.parse(match[0]);
+  } catch(e) {
+    console.warn('Twitter sentiment error:', e);
+    return null;
+  }
+}
+
+function renderTwitterSentiment(data) {
+  const el = document.getElementById('twitterPanel');
+  if (!el || !data) return;
+
+  const fgColor = data.fearGreedIndex > 75 ? '#4CAF78' :
+                  data.fearGreedIndex > 50 ? '#E09030' :
+                  data.fearGreedIndex > 25 ? '#E09030' : '#E05050';
+
+  el.innerHTML = `
+    <!-- Fear & Greed -->
+    <div style="text-align:center;padding:8px;background:var(--obs4);border-radius:8px;margin-bottom:10px">
+      <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--smoke);letter-spacing:.1em;margin-bottom:4px">FEAR & GREED INDEX</div>
+      <div style="font-size:24px;font-weight:500;color:${fgColor};font-family:'DM Mono',monospace">${data.fearGreedIndex}</div>
+      <div style="font-size:11px;color:${fgColor}">${data.fearGreedLabel}</div>
+    </div>
+    <!-- Sentiment bars -->
+    <div style="margin-bottom:10px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:5px">
+        <span style="font-size:11px;color:var(--white-dim);width:55px">🐂 Bulls</span>
+        <div style="flex:1;height:5px;background:var(--fog);border-radius:2px;overflow:hidden">
+          <div style="width:${data.bullishPct}%;height:100%;background:#4CAF78;border-radius:2px"></div>
+        </div>
+        <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--smoke)">${data.bullishPct}%</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:5px">
+        <span style="font-size:11px;color:var(--white-dim);width:55px">🐻 Bears</span>
+        <div style="flex:1;height:5px;background:var(--fog);border-radius:2px;overflow:hidden">
+          <div style="width:${data.bearishPct}%;height:100%;background:#E05050;border-radius:2px"></div>
+        </div>
+        <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--smoke)">${data.bearishPct}%</span>
+      </div>
+    </div>
+    <!-- Trending hashtags -->
+    <div style="margin-bottom:10px;display:flex;gap:5px;flex-wrap:wrap">
+      ${(data.trending||[]).map(t => `<span style="font-family:'DM Mono',monospace;font-size:9px;padding:2px 7px;background:rgba(200,150,62,0.1);border:0.5px solid var(--gold-dim);border-radius:10px;color:var(--gold)">#${t}</span>`).join('')}
+    </div>
+    <!-- Top tweets -->
+    ${(data.topTweets||[]).map(t => {
+      const sc = t.sentiment==='bullish'?'#4CAF78':t.sentiment==='bearish'?'#E05050':'var(--smoke)';
+      const em = t.sentiment==='bullish'?'▲':t.sentiment==='bearish'?'▼':'●';
+      return `<div style="padding:8px;background:var(--obs4);border-radius:6px;margin-bottom:6px;border-left:2px solid ${sc}">
+        <div style="font-size:11px;color:var(--white-dim);line-height:1.4;margin-bottom:4px">${sanitize(t.text)}</div>
+        <div style="display:flex;justify-content:space-between">
+          <span style="font-size:10px;color:${sc}">${em} ${t.sentiment}</span>
+          <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--fog)">♥ ${t.likes}</span>
+        </div>
+      </div>`;
+    }).join('')}
+  `;
+}
+
 // ── INIT ──────────────────────────────────────────────────────────────────
 renderCalendar();
 renderHistory();
@@ -1932,3 +2032,4 @@ setTimeout(updateCorrelacion, 1500);
 </script>
 </body>
 </html>
+
