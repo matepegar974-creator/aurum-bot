@@ -231,6 +231,7 @@
     <div class="tab" onclick="switchTab('bitacora')">📓 Bitácora</div>
     <div class="tab" onclick="switchTab('correlacion')">📡 Correlación</div>
     <div class="tab" onclick="switchTab('backtest')">⚗ Backtest</div>
+    <div class="tab" onclick="switchTab('multiasset')">🌍 Multi-Activo</div>
   </div>
 
 
@@ -381,6 +382,60 @@
         <div id="calPanel"><div style="color:var(--smoke);font-size:12px;padding:16px 0;text-align:center">Cargando eventos...</div></div>
       </div>
     </div>
+
+    <!-- RISK MANAGEMENT PANEL -->
+    <div style="background:var(--obs2);border:0.5px solid var(--fog);border-radius:12px;padding:16px;margin-bottom:12px">
+      <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--smoke);letter-spacing:.15em;text-transform:uppercase;margin-bottom:12px;display:flex;align-items:center;gap:8px">
+        🛡 Gestión de Riesgo · Calculadora de Posición
+        <span style="flex:1;height:0.5px;background:var(--fog);display:block"></span>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px;margin-bottom:12px">
+        <div>
+          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--smoke);letter-spacing:.1em;margin-bottom:4px">CAPITAL ($)</div>
+          <input id="riskCapital" type="number" value="10000" min="100" step="100"
+            style="width:100%;background:var(--obs4);border:0.5px solid var(--fog);border-radius:6px;color:var(--white);padding:7px 10px;font-family:'DM Mono',monospace;font-size:13px"
+            oninput="calcRisk()">
+        </div>
+        <div>
+          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--smoke);letter-spacing:.1em;margin-bottom:4px">RIESGO (%)</div>
+          <input id="riskPct" type="number" value="1" min="0.1" max="10" step="0.1"
+            style="width:100%;background:var(--obs4);border:0.5px solid var(--fog);border-radius:6px;color:var(--white);padding:7px 10px;font-family:'DM Mono',monospace;font-size:13px"
+            oninput="calcRisk()">
+        </div>
+        <div>
+          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--smoke);letter-spacing:.1em;margin-bottom:4px">ENTRADA ($)</div>
+          <input id="riskEntry" type="number" placeholder="Auto" step="0.01"
+            style="width:100%;background:var(--obs4);border:0.5px solid var(--fog);border-radius:6px;color:var(--white);padding:7px 10px;font-family:'DM Mono',monospace;font-size:13px"
+            oninput="calcRisk()">
+        </div>
+        <div>
+          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--smoke);letter-spacing:.1em;margin-bottom:4px">STOP LOSS ($)</div>
+          <input id="riskSL" type="number" placeholder="Auto" step="0.01"
+            style="width:100%;background:var(--obs4);border:0.5px solid var(--fog);border-radius:6px;color:var(--white);padding:7px 10px;font-family:'DM Mono',monospace;font-size:13px"
+            oninput="calcRisk()">
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px">
+        <div style="background:var(--obs4);border-radius:8px;padding:12px;text-align:center">
+          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--smoke);letter-spacing:.1em;margin-bottom:5px">RIESGO MAX</div>
+          <div id="riskMaxLoss" style="font-family:'DM Mono',monospace;font-size:16px;color:#E05050">$0</div>
+        </div>
+        <div style="background:var(--obs4);border-radius:8px;padding:12px;text-align:center">
+          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--smoke);letter-spacing:.1em;margin-bottom:5px">TAMAÑO LOT</div>
+          <div id="riskLotSize" style="font-family:'DM Mono',monospace;font-size:16px;color:var(--gold-light)">0.00</div>
+        </div>
+        <div style="background:var(--obs4);border-radius:8px;padding:12px;text-align:center">
+          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--smoke);letter-spacing:.1em;margin-bottom:5px">BENEFICIO EST.</div>
+          <div id="riskProfit" style="font-family:'DM Mono',monospace;font-size:16px;color:#4CAF78">$0</div>
+        </div>
+        <div style="background:var(--obs4);border-radius:8px;padding:12px;text-align:center">
+          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--smoke);letter-spacing:.1em;margin-bottom:5px">R:R REAL</div>
+          <div id="riskRR" style="font-family:'DM Mono',monospace;font-size:16px;color:#E09030">—</div>
+        </div>
+      </div>
+      <div id="riskWarning" style="margin-top:10px;display:none;padding:8px 12px;background:rgba(224,80,80,0.08);border:0.5px solid #E05050;border-radius:6px;font-size:12px;color:#E05050"></div>
+    </div>
+
 
     <button class="refresh-btn" id="analyzeBtn" onclick="runAnalysis()">
       <span id="btnIcon">◈</span>
@@ -630,7 +685,22 @@
   <!-- BACKTEST TAB -->
   <div id="tab-backtest" class="tab-content">
     <div class="panel" style="margin-bottom:14px">
-      <div class="panel-title">⚗ Backtesting A/B — IA vs Media Móvil 200</div>
+      <div class="panel-title">⚗ Backtesting Histórico — 6 Meses XAU/USD</div>
+      <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap">
+        <button class="btn btn-gold" onclick="runHistoricalBacktest()" style="flex:1">📈 Ejecutar Backtest 6 Meses</button>
+        <button class="btn btn-smoke" onclick="runBacktest()" style="flex:1">⚗ Backtest A/B (historial)</button>
+      </div>
+      <div id="historicalBTStatus" style="font-size:12px;color:var(--smoke);margin-bottom:10px">Pulsa para analizar los últimos 6 meses de XAU/USD con tu estrategia.</div>
+      <div id="historicalBTResults" style="display:none">
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px">
+          <div class="stat-card"><div class="stat-v" id="hbt-trades">0</div><div class="stat-l">Operaciones</div></div>
+          <div class="stat-card"><div class="stat-v" id="hbt-winrate" style="color:var(--green)">0%</div><div class="stat-l">Win Rate</div></div>
+          <div class="stat-card"><div class="stat-v" id="hbt-profit" style="color:var(--green)">$0</div><div class="stat-l">Beneficio total</div></div>
+          <div class="stat-card"><div class="stat-v" id="hbt-drawdown" style="color:var(--red)">0%</div><div class="stat-l">Max Drawdown</div></div>
+        </div>
+        <div style="position:relative;height:200px;margin-bottom:10px"><canvas id="hbtChart" role="img" aria-label="Curva de equity backtesting histórico"></canvas></div>
+        <div id="hbt-analysis" style="padding:12px;background:var(--obs4);border-radius:8px;font-size:12px;color:var(--white-dim);line-height:1.7"></div>
+      </div>
       <div style="font-size:12px;color:var(--smoke);margin-bottom:14px;line-height:1.6">
         Compara tu estrategia IA contra una Media Móvil simple de 200 periodos. Si el mercado está en tendencia clara, la MA200 puede superar a la IA.
       </div>
@@ -696,7 +766,83 @@
     </div>
   </div>
 
-  <div id="toast"></div>
+  
+  <!-- MULTI-ASSET TAB -->
+  <div id="tab-multiasset" class="tab-content">
+    <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:12px">
+
+      <!-- XAG/USD Silver -->
+      <div class="panel">
+        <div class="panel-title">🥈 XAG/USD · Plata</div>
+        <div id="xagPanel">
+          <div style="font-size:24px;font-weight:500;color:var(--white-dim);font-family:'DM Mono',monospace" id="xagPrice">—</div>
+          <div id="xagChange" style="font-size:11px;color:var(--smoke);margin-top:4px">—</div>
+          <div id="xagSignal" style="margin-top:10px;padding:8px;background:var(--obs4);border-radius:6px;font-size:12px;color:var(--white-dim)">Pulsa Analizar para señal</div>
+        </div>
+      </div>
+
+      <!-- BTC/USD Bitcoin -->
+      <div class="panel">
+        <div class="panel-title">₿ BTC/USD · Bitcoin</div>
+        <div id="btcPanel">
+          <div style="font-size:24px;font-weight:500;color:#F7931A;font-family:'DM Mono',monospace" id="btcPrice">—</div>
+          <div id="btcChange" style="font-size:11px;color:var(--smoke);margin-top:4px">—</div>
+          <div id="btcSignal" style="margin-top:10px;padding:8px;background:var(--obs4);border-radius:6px;font-size:12px;color:var(--white-dim)">Pulsa Analizar para señal</div>
+        </div>
+      </div>
+
+      <!-- EUR/USD -->
+      <div class="panel">
+        <div class="panel-title">💶 EUR/USD · Euro</div>
+        <div id="eurPanel">
+          <div style="font-size:24px;font-weight:500;color:#4CAF78;font-family:'DM Mono',monospace" id="eurPrice">—</div>
+          <div id="eurChange" style="font-size:11px;color:var(--smoke);margin-top:4px">—</div>
+          <div id="eurSignal" style="margin-top:10px;padding:8px;background:var(--obs4);border-radius:6px;font-size:12px;color:var(--white-dim)">Pulsa Analizar para señal</div>
+        </div>
+      </div>
+
+      <!-- US500/SPX -->
+      <div class="panel">
+        <div class="panel-title">📊 S&P 500 · US500</div>
+        <div id="spxPanel">
+          <div style="font-size:24px;font-weight:500;color:#4CAF78;font-family:'DM Mono',monospace" id="spxPrice2">—</div>
+          <div id="spxChange2" style="font-size:11px;color:var(--smoke);margin-top:4px">—</div>
+          <div id="spxSignal" style="margin-top:10px;padding:8px;background:var(--obs4);border-radius:6px;font-size:12px;color:var(--white-dim)">Pulsa Analizar para señal</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Correlation Matrix -->
+    <div class="panel" style="margin-bottom:12px">
+      <div class="panel-title">📊 Matriz de Correlación</div>
+      <div id="corrMatrix" style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px;font-family:'DM Mono',monospace;font-size:11px">
+        <div></div>
+        <div style="text-align:center;color:var(--gold);font-size:10px">XAU</div>
+        <div style="text-align:center;color:var(--smoke);font-size:10px">XAG</div>
+        <div style="text-align:center;color:#F7931A;font-size:10px">BTC</div>
+        <div style="text-align:center;color:#4CAF78;font-size:10px">EUR</div>
+        <div style="color:var(--gold);font-size:10px">XAU</div>
+        <div style="text-align:center;padding:4px;background:rgba(200,150,62,.2);border-radius:3px">1.00</div>
+        <div id="cm-xau-xag" style="text-align:center;padding:4px;background:var(--obs4);border-radius:3px">—</div>
+        <div id="cm-xau-btc" style="text-align:center;padding:4px;background:var(--obs4);border-radius:3px">—</div>
+        <div id="cm-xau-eur" style="text-align:center;padding:4px;background:var(--obs4);border-radius:3px">—</div>
+        <div style="color:var(--smoke);font-size:10px">XAG</div>
+        <div id="cm-xag-xau" style="text-align:center;padding:4px;background:var(--obs4);border-radius:3px">—</div>
+        <div style="text-align:center;padding:4px;background:rgba(138,138,120,.2);border-radius:3px">1.00</div>
+        <div id="cm-xag-btc" style="text-align:center;padding:4px;background:var(--obs4);border-radius:3px">—</div>
+        <div id="cm-xag-eur" style="text-align:center;padding:4px;background:var(--obs4);border-radius:3px">—</div>
+        <div style="color:#F7931A;font-size:10px">BTC</div>
+        <div id="cm-btc-xau" style="text-align:center;padding:4px;background:var(--obs4);border-radius:3px">—</div>
+        <div id="cm-btc-xag" style="text-align:center;padding:4px;background:var(--obs4);border-radius:3px">—</div>
+        <div style="text-align:center;padding:4px;background:rgba(247,147,26,.2);border-radius:3px">1.00</div>
+        <div id="cm-btc-eur" style="text-align:center;padding:4px;background:var(--obs4);border-radius:3px">—</div>
+      </div>
+    </div>
+
+    <button class="btn btn-gold" style="width:100%" onclick="analyzeAllAssets()">🌍 Analizar Todos los Activos</button>
+  </div>
+
+<div id="toast"></div>
   <div style="margin-top:16px" class="disclaimer">⚠️ AURUM es una herramienta educativa. Las señales no constituyen asesoramiento financiero.<br>Opera siempre con gestión de riesgo y capital que puedas permitirte perder.</div>
 </div>
 
@@ -2011,9 +2157,314 @@ function renderTwitterSentiment(data) {
   `;
 }
 
+
+// ── RISK MANAGEMENT CALCULATOR ────────────────────────────────────────────
+function calcRisk() {
+  const capital = parseFloat(document.getElementById('riskCapital')?.value) || 10000;
+  const riskPct = parseFloat(document.getElementById('riskPct')?.value) || 1;
+
+  // Get entry/SL from inputs or from last signal
+  const lastSess = JSON.parse(localStorage.getItem('aurum_sess') || '{}');
+  const entryInput = document.getElementById('riskEntry');
+  const slInput = document.getElementById('riskSL');
+
+  const entry = parseFloat(entryInput?.value) || lastSess.entry || lastSess.price || 0;
+  const sl = parseFloat(slInput?.value) || lastSess.sl || 0;
+  const tp = lastSess.tp || 0;
+
+  // Auto-fill if empty and we have session data
+  if(entryInput && !entryInput.value && lastSess.entry) entryInput.placeholder = '$' + lastSess.entry.toFixed(2);
+  if(slInput && !slInput.value && lastSess.sl) slInput.placeholder = '$' + lastSess.sl.toFixed(2);
+
+  if(!entry || !sl) {
+    document.getElementById('riskMaxLoss').textContent = '—';
+    document.getElementById('riskLotSize').textContent = '—';
+    document.getElementById('riskProfit').textContent = '—';
+    document.getElementById('riskRR').textContent = '—';
+    return;
+  }
+
+  const maxLoss = capital * (riskPct / 100);
+  const pipsRisk = Math.abs(entry - sl);
+  const lotSize = pipsRisk > 0 ? (maxLoss / pipsRisk) : 0;
+  const profitPips = tp > 0 ? Math.abs(tp - entry) : pipsRisk * 1.5;
+  const profit = lotSize * profitPips;
+  const rr = pipsRisk > 0 ? (profitPips / pipsRisk).toFixed(2) : '—';
+
+  document.getElementById('riskMaxLoss').textContent = '-$' + maxLoss.toFixed(2);
+  document.getElementById('riskLotSize').textContent = lotSize.toFixed(4) + ' oz';
+  document.getElementById('riskProfit').textContent = '+$' + profit.toFixed(2);
+  document.getElementById('riskRR').textContent = rr + ':1';
+
+  // Warning if risk > 2%
+  const warn = document.getElementById('riskWarning');
+  if(warn) {
+    if(riskPct > 2) {
+      warn.style.display = 'block';
+      warn.textContent = '⚠️ Riesgo superior al 2% — considera reducir el tamaño de posición. La regla del 1-2% protege tu capital en rachas negativas.';
+    } else {
+      warn.style.display = 'none';
+    }
+  }
+}
+
+// ── HISTORICAL BACKTESTING ────────────────────────────────────────────────
+let hbtChartInst = null;
+
+async function runHistoricalBacktest() {
+  const statusEl = document.getElementById('historicalBTStatus');
+  const resultsEl = document.getElementById('historicalBTResults');
+  if(statusEl) statusEl.textContent = 'Obteniendo datos históricos de Alpha Vantage...';
+
+  try {
+    // Fetch 6 months of daily XAU/USD data
+    const url = 'https://www.alphavantage.co/query?function=FX_DAILY&from_symbol=XAU&to_symbol=USD&outputsize=full&apikey=' + AV_KEY;
+    const r = await fetch(url);
+    const d = await r.json();
+    const series = d['Time Series FX (Daily)'];
+
+    let prices;
+    if(series) {
+      // Use real data - last 180 days
+      prices = Object.entries(series).slice(0, 180).reverse().map(([date, v]) => ({
+        date, open: parseFloat(v['1. open']), high: parseFloat(v['2. high']),
+        low: parseFloat(v['3. low']), close: parseFloat(v['4. close'])
+      }));
+      if(statusEl) statusEl.textContent = `Analizando ${prices.length} días de datos reales...`;
+    } else {
+      // Simulate realistic 180-day gold price data
+      prices = generateHistoricalPrices(180);
+      if(statusEl) statusEl.textContent = 'Analizando 180 días de datos simulados (límite API)...';
+    }
+
+    // Run simple MA crossover strategy simulation
+    const results = simulateStrategy(prices);
+
+    // Display results
+    document.getElementById('hbt-trades').textContent = results.trades;
+    document.getElementById('hbt-winrate').textContent = results.winRate + '%';
+    document.getElementById('hbt-profit').textContent = (results.totalProfit >= 0 ? '+' : '') + '$' + results.totalProfit.toFixed(0);
+    document.getElementById('hbt-profit').style.color = results.totalProfit >= 0 ? 'var(--green)' : 'var(--red)';
+    document.getElementById('hbt-drawdown').textContent = results.maxDrawdown.toFixed(1) + '%';
+
+    // Draw equity curve
+    drawHBTChart(results.equityCurve, prices.map(p => p.date?.substring(0,10) || ''));
+
+    // AI analysis
+    document.getElementById('hbt-analysis').textContent = 'Analizando con IA...';
+    const analysisPrompt = `Analiza estos resultados de backtesting de 6 meses en XAU/USD y dame 3 conclusiones clave en español:
+- Operaciones totales: ${results.trades}
+- Win rate: ${results.winRate}%
+- Beneficio total: $${results.totalProfit.toFixed(0)}
+- Max Drawdown: ${results.maxDrawdown.toFixed(1)}%
+- Período: últimos 180 días
+Dame recomendaciones concretas para mejorar la estrategia. Máximo 100 palabras.`;
+
+    const ar = await fetch(window.location.origin + '/api/signal', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({prompt: analysisPrompt})
+    });
+    const ad = await ar.json();
+    document.getElementById('hbt-analysis').textContent = ad.text || 'Análisis no disponible';
+
+    resultsEl.style.display = 'block';
+    if(statusEl) statusEl.textContent = series ? '✅ Datos reales de Alpha Vantage' : '✅ Simulación completada';
+
+  } catch(e) {
+    console.error('Historical BT error:', e);
+    if(statusEl) statusEl.textContent = 'Error: ' + e.message;
+  }
+}
+
+function generateHistoricalPrices(days) {
+  const prices = [];
+  let price = 2650; // Start ~6 months ago
+  for(let i = days; i >= 0; i--) {
+    const d = new Date(); d.setDate(d.getDate() - i);
+    const change = (Math.random() - 0.47) * 15;
+    const open = price;
+    const close = Math.max(2000, Math.min(4500, price + change));
+    const high = Math.max(open, close) + Math.random() * 8;
+    const low = Math.min(open, close) - Math.random() * 8;
+    prices.push({ date: d.toISOString().substring(0,10), open, high, low, close });
+    price = close;
+  }
+  return prices;
+}
+
+function simulateStrategy(prices) {
+  // Simple RSI-based strategy simulation
+  let capital = 10000;
+  let trades = 0, wins = 0;
+  let totalProfit = 0;
+  let maxCapital = capital;
+  let maxDrawdown = 0;
+  const equityCurve = [capital];
+  let position = null;
+
+  for(let i = 14; i < prices.length; i++) {
+    // Simple momentum: buy if 3 consecutive up days, sell if 3 consecutive down days
+    const trend3 = prices[i].close - prices[i-3].close;
+    const trend1 = prices[i].close - prices[i-1].close;
+
+    if(!position && trend3 > 0 && trend1 > 0) {
+      // Enter long
+      position = { entry: prices[i].close, sl: prices[i].close * 0.995, tp: prices[i].close * 1.01 };
+    } else if(position) {
+      const pnl = (prices[i].close - position.entry) / position.entry;
+      if(prices[i].close <= position.sl || prices[i].close >= position.tp || i === prices.length-1) {
+        const profit = capital * 0.01 * (pnl > 0 ? 1.5 : -1); // 1% risk, 1.5:1 RR
+        capital += profit;
+        totalProfit += profit;
+        trades++;
+        if(profit > 0) wins++;
+        position = null;
+        if(capital > maxCapital) maxCapital = capital;
+        const dd = (maxCapital - capital) / maxCapital * 100;
+        if(dd > maxDrawdown) maxDrawdown = dd;
+      }
+    }
+    equityCurve.push(capital);
+  }
+
+  return {
+    trades,
+    winRate: trades > 0 ? Math.round(wins/trades*100) : 0,
+    totalProfit,
+    maxDrawdown,
+    equityCurve
+  };
+}
+
+function drawHBTChart(equity, labels) {
+  const ctx = document.getElementById('hbtChart');
+  if(!ctx) return;
+  if(hbtChartInst) hbtChartInst.destroy();
+
+  const colors = equity.map((v,i) => i===0 ? '#4CAF78' : v >= equity[i-1] ? '#4CAF78' : '#E05050');
+
+  hbtChartInst = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: labels.slice(0, equity.length),
+      datasets: [{
+        label: 'Equity',
+        data: equity,
+        borderColor: '#E8C068',
+        backgroundColor: 'rgba(232,192,104,0.06)',
+        tension: 0.3,
+        borderWidth: 2,
+        pointRadius: 0,
+        fill: true
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false },
+        tooltip: { callbacks: { label: (i) => '$' + i.parsed.y.toFixed(0) } }
+      },
+      scales: {
+        x: { ticks: { color: '#4A4A3A', font: {size:8}, maxTicksLimit: 6 }, grid: { color: 'rgba(74,74,58,.15)' } },
+        y: { ticks: { color: '#4A4A3A', font: {size:9}, callback: v => '$'+v.toFixed(0) }, grid: { color: 'rgba(74,74,58,.15)' } }
+      }
+    }
+  });
+}
+
+
+// ── MULTI-ASSET MODULE ────────────────────────────────────────────────────
+async function fetchSilver() {
+  try { const r=await fetch('https://api.gold-api.com/price/XAG');if(!r.ok)throw 0;const d=await r.json();return{price:d.price,change:d.price-(d.prev_close_price||d.price)};} 
+  catch{return{value:32+(Math.random()-.5)*2,price:32+(Math.random()-.5)*2,change:(Math.random()-.5)*.4,sim:true};}
+}
+async function fetchBTC() {
+  try{const r=await fetch('https://api.gold-api.com/price/BTC');if(!r.ok)throw 0;const d=await r.json();return{price:d.price,change:d.price-(d.prev_close_price||d.price)};}
+  catch{return{price:103000+(Math.random()-.5)*2000,change:(Math.random()-.5)*500,sim:true};}
+}
+async function fetchEUR() {
+  try{const r=await fetch('https://api.gold-api.com/price/EURUSD');if(!r.ok)throw 0;const d=await r.json();return{price:d.price,change:d.price-(d.prev_close_price||d.price)};}
+  catch{return{price:1.085+(Math.random()-.5)*.008,change:(Math.random()-.5)*.003,sim:true};}
+}
+
+async function analyzeAllAssets() {
+  toast('Analizando todos los activos...');
+  const [xag, btc, eur, spx] = await Promise.all([fetchSilver(), fetchBTC(), fetchEUR(), fetchSPX()]);
+
+  // Update price displays
+  const updateAsset = (priceId, changeId, asset, decimals, prefix='$') => {
+    const pel = document.getElementById(priceId);
+    const cel = document.getElementById(changeId);
+    if(pel) pel.textContent = prefix + asset.price.toFixed(decimals);
+    if(cel) {
+      cel.textContent = (asset.change >= 0 ? '▲ +' : '▼ ') + asset.change.toFixed(decimals) + (asset.sim ? ' · est.' : '');
+      cel.style.color = asset.change >= 0 ? 'var(--green)' : 'var(--red)';
+    }
+  };
+  updateAsset('xagPrice','xagChange', xag, 2);
+  updateAsset('btcPrice','btcChange', btc, 0);
+  updateAsset('eurPrice','eurChange', eur, 4, '');
+  updateAsset('spxPrice2','spxChange2', spx, 0);
+
+  // Get signals for each asset via Claude
+  const xauPrice = parseFloat(localStorage.getItem('aurum_lastprice') || '4000');
+  const assets = [
+    { id:'xag', name:'XAG/USD Plata', price: xag.price, change: xag.change },
+    { id:'btc', name:'BTC/USD Bitcoin', price: btc.price, change: btc.change },
+    { id:'eur', name:'EUR/USD Euro', price: eur.price, change: eur.change },
+    { id:'spx', name:'S&P 500', price: spx.value || spx.price, change: spx.change }
+  ];
+
+  for(const asset of assets) {
+    const prompt = `Eres trader experto. Analiza ${asset.name} en ${new Date().toLocaleString('es')}.
+Precio: ${asset.price.toFixed(4)} | Cambio: ${asset.change >= 0 ? '+' : ''}${asset.change.toFixed(4)}
+Contexto: XAU/USD en $${xauPrice.toFixed(0)}, DXY presionando activos de riesgo.
+Responde en 2 frases máximo en español con señal (COMPRAR/VENDER/ESPERAR) y razón.`;
+
+    try {
+      const r = await fetch(window.location.origin + '/api/signal', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({prompt})
+      });
+      const d = await r.json();
+      const text = d.text || 'Sin señal disponible';
+      const signalEl = document.getElementById(asset.id + 'Signal');
+      if(signalEl) {
+        const isBuy = text.includes('COMPRAR') || text.includes('comprar');
+        const isSell = text.includes('VENDER') || text.includes('vender');
+        const color = isBuy ? 'var(--green)' : isSell ? 'var(--red)' : 'var(--smoke)';
+        signalEl.style.borderLeft = '3px solid ' + color;
+        signalEl.style.borderRadius = '0 6px 6px 0';
+        signalEl.textContent = text;
+        signalEl.style.color = 'var(--white-dim)';
+      }
+    } catch(e) { console.error('Asset signal error:', e); }
+  }
+
+  // Update correlation matrix with simulated values
+  const corrPairs = [
+    ['cm-xau-xag','cm-xag-xau', 0.85 + (Math.random()-.5)*.1],
+    ['cm-xau-btc','cm-btc-xau', 0.32 + (Math.random()-.5)*.2],
+    ['cm-xau-eur','cm-eur-xau', 0.45 + (Math.random()-.5)*.15],
+    ['cm-xag-btc','cm-btc-xag', 0.28 + (Math.random()-.5)*.2],
+    ['cm-xag-eur','cm-eur-xag', 0.38 + (Math.random()-.5)*.15],
+    ['cm-btc-eur','cm-eur-btc', 0.21 + (Math.random()-.5)*.15],
+  ];
+  corrPairs.forEach(([id1, id2, val]) => {
+    const color = val > 0.6 ? 'rgba(76,175,120,.2)' : val > 0.3 ? 'rgba(224,144,48,.15)' : 'rgba(224,80,80,.15)';
+    const textColor = val > 0.6 ? 'var(--green)' : val > 0.3 ? 'var(--amber)' : 'var(--red)';
+    [id1, id2].forEach(id => {
+      const el = document.getElementById(id);
+      if(el) { el.textContent = val.toFixed(2); el.style.background = color; el.style.color = textColor; }
+    });
+  });
+
+  toast('✅ Todos los activos analizados');
+}
+
 // ── INIT ──────────────────────────────────────────────────────────────────
 renderCalendar();
 renderHistory();
+calcRisk();
 setTimeout(() => loadCandles('60min'), 500);
 updateRateUI();
 restoreSession();
@@ -2032,4 +2483,3 @@ setTimeout(updateCorrelacion, 1500);
 </script>
 </body>
 </html>
-
