@@ -1050,14 +1050,20 @@ async function fetchDXY() {
 // ── FETCH REAL NEWS ───────────────────────────────────────────────────────
 async function fetchRealNews() {
   try {
-    const q = encodeURIComponent('gold price OR "XAU/USD" OR "gold market" OR "Federal Reserve" OR inflation');
-    const url = `https://newsapi.org/v2/everything?q=${q}&language=en&sortBy=publishedAt&pageSize=6&apiKey=${NEWS_KEY}`;
-    const r = await fetch(url);
-    if (!r.ok) throw new Error();
+    // Use backend proxy to avoid CORS/plan restrictions
+    const r = await fetch(window.location.origin + '/api/news');
+    if (!r.ok) throw new Error('News API error ' + r.status);
     const d = await r.json();
-    if (!d.articles?.length) throw new Error();
-    return d.articles.map(a => ({ headline: a.title, source: a.source?.name || '', publishedAt: a.publishedAt, url: a.url }));
-  } catch { return null; }
+    if (!d.articles?.length) throw new Error('No articles');
+    return d.articles.map(a => ({
+      headline: a.headline || a.title || '',
+      source: a.source || '',
+      publishedAt: a.publishedAt || ''
+    }));
+  } catch(e) {
+    console.warn('News fetch error:', e);
+    return null;
+  }
 }
 
 // ── ECONOMIC CALENDAR (hardcoded weekly events + dynamic dates) ───────────
