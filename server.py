@@ -13,6 +13,7 @@ def add_cors(response):
     return response
 
 ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
+NEWS_API_KEY = os.environ.get('NEWS_API_KEY', 'babbb951d220490a81cccfd354d348c2')
 
 @app.route('/')
 def index():
@@ -49,6 +50,25 @@ def get_signal():
     except Exception as e:
         print(f"Exception: {traceback.format_exc()}")
         return jsonify({'error': str(e)}), 500
+
+@app.route('/api/news', methods=['GET', 'OPTIONS'])
+def get_news():
+    if request.method == 'OPTIONS':
+        return '', 200
+    try:
+        q = 'gold price OR "XAU/USD" OR "gold market" OR "Federal Reserve" OR inflation'
+        url = f'https://newsapi.org/v2/everything?q={requests.utils.quote(q)}&language=en&sortBy=publishedAt&pageSize=6&apiKey={NEWS_API_KEY}'
+        r = requests.get(url, timeout=10)
+        if not r.ok:
+            return jsonify({'articles': [], 'error': f'NewsAPI {r.status_code}'}), 200
+        d = r.json()
+        articles = d.get('articles', [])
+        # Return only what we need
+        clean = [{'headline': a.get('title',''), 'source': a.get('source',{}).get('name',''), 'publishedAt': a.get('publishedAt','')} for a in articles]
+        return jsonify({'articles': clean})
+    except Exception as e:
+        print(f"News error: {traceback.format_exc()}")
+        return jsonify({'articles': [], 'error': str(e)}), 200
 
 @app.route('/health', methods=['GET'])
 def health():
