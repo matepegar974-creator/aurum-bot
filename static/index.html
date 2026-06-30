@@ -203,6 +203,34 @@
     .signal-levels { grid-template-columns: repeat(2,1fr); }
     .stat-grid { grid-template-columns: repeat(2,1fr); }
   }
+
+  /* MOBILE OPTIMIZATION */
+  @media(max-width:640px) {
+    body { font-size: 13px; }
+    .wrap { padding: 8px; }
+    .header-bar { flex-direction: column; align-items: flex-start; gap: 8px; }
+    .tabs { overflow-x: auto; -webkit-overflow-scrolling: touch; padding: 3px; gap: 2px; }
+    .tab { padding: 8px 10px; font-size: 11px; flex-shrink: 0; }
+    .price-card { grid-template-columns: 1fr; gap: 8px; padding: 14px; }
+    .price-big { font-size: 30px; }
+    .meta-right { flex-direction: row; flex-wrap: wrap; gap: 12px; text-align: left; }
+    .ind-grid { grid-template-columns: repeat(2, 1fr); gap: 6px; }
+    .ind-card { padding: 8px; }
+    .sig-box { padding: 14px; }
+    .sig-type { font-size: 18px; }
+    .levels { grid-template-columns: repeat(2, 1fr); gap: 6px; }
+    .lv { padding: 6px; }
+    .stat-grid { grid-template-columns: repeat(2, 1fr); gap: 6px; }
+    .rate-bar-wrap { flex-wrap: wrap; gap: 6px; font-size: 10px; }
+    button, .btn { min-height: 40px; touch-action: manipulation; }
+    input[type=range] { height: 24px; }
+    .analyze-btn { padding: 14px; font-size: 13px; }
+  }
+  @media(max-width:380px) {
+    .ind-grid { grid-template-columns: 1fr; }
+    .levels { grid-template-columns: 1fr; }
+  }
+  .tab, .btn, button { -webkit-tap-highlight-color: rgba(232,192,104,0.2); }
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
 </head>
@@ -445,6 +473,19 @@
 
   <!-- HISTORY TAB -->
   <div id="tab-history" class="tab-content">
+
+    <!-- SERVER 24/7 TRACKED SIGNALS -->
+    <div class="panel" style="margin-bottom:14px">
+      <div class="panel-title">🤖 Señales Rastreadas por el Servidor 24/7</div>
+      <div style="font-size:12px;color:var(--smoke);margin-bottom:10px">Estas señales se generan y comprueban automáticamente en el servidor, aunque tengas el navegador cerrado.</div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:12px">
+        <div class="stat-card"><div class="stat-value" id="serverSignals" style="color:var(--gold)">—</div><div class="stat-label">Total rastreadas</div></div>
+        <div class="stat-card"><div class="stat-value" id="serverWinRate" style="color:var(--green)">—</div><div class="stat-label">Precisión</div></div>
+        <div class="stat-card"><div class="stat-value" id="serverLastSignal" style="color:var(--amber)">—</div><div class="stat-label">Última señal</div></div>
+      </div>
+      <button class="btn btn-smoke" style="width:100%" onclick="checkBotStatus()">↻ Actualizar estado del servidor</button>
+    </div>
+
     <div class="stat-grid" id="statsGrid">
       <div class="stat-card"><div class="stat-value" id="statTotal">0</div><div class="stat-label">Señales</div></div>
       <div class="stat-card"><div class="stat-value" id="statWin" style="color:var(--green)">0%</div><div class="stat-label">Aciertos</div></div>
@@ -2467,10 +2508,48 @@ Responde en 2 frases máximo en español con señal (COMPRAR/VENDER/ESPERAR) y r
   toast('✅ Todos los activos analizados');
 }
 
+
+// ── BOT 24/7 STATUS CHECK ─────────────────────────────────────────────────
+async function checkBotStatus() {
+  try {
+    const r = await fetch(window.location.origin + '/api/status');
+    const d = await r.json();
+    const dot = document.getElementById('botStatusDot');
+    const text = document.getElementById('botStatusText');
+    if(dot && text) {
+      dot.style.background = '#4CAF78';
+      dot.style.boxShadow = '0 0 6px #4CAF78';
+      text.textContent = '🟢 Bot activo 24/7 en servidor · Última señal: ' + (d.last_signal || 'En espera (ESPERAR)');
+    }
+    const st = document.getElementById('botSignalsTracked');
+    const wr = document.getElementById('botWinRate');
+    if(st) st.textContent = d.signals_tracked || '0';
+    if(wr) wr.textContent = d.win_rate || '—';
+    // Update history tab elements too
+    const ss = document.getElementById('serverSignals');
+    const swr = document.getElementById('serverWinRate');
+    const sls = document.getElementById('serverLastSignal');
+    if(ss) ss.textContent = d.signals_tracked || '0';
+    if(swr) swr.textContent = d.win_rate || 'Sin datos';
+    if(sls) sls.textContent = d.last_signal || 'ESPERAR';
+  } catch(e) {
+    const dot = document.getElementById('botStatusDot');
+    const text = document.getElementById('botStatusText');
+    if(dot && text) {
+      dot.style.background = '#E05050';
+      text.textContent = '🔴 No se pudo conectar al servidor';
+    }
+    const ss = document.getElementById('serverSignals');
+    if(ss) ss.textContent = 'Error';
+  }
+}
+
 // ── INIT ──────────────────────────────────────────────────────────────────
 renderCalendar();
 renderHistory();
 calcRisk();
+checkBotStatus();
+setInterval(checkBotStatus, 30000);
 setTimeout(() => loadCandles('60min'), 500);
 updateRateUI();
 restoreSession();
