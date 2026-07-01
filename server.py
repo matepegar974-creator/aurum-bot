@@ -1,11 +1,12 @@
 from flask import Flask, request, jsonify, send_from_directory
 import requests
 import os
+import re
 import traceback
 import threading
 import time
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 
 app = Flask(__name__, static_folder='static')
 
@@ -16,18 +17,32 @@ def add_cors(response):
     response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
     return response
 
+# ── Credenciales ──────────────────────────────────────────────────────────────
 ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
-NEWS_API_KEY = os.environ.get('NEWS_API_KEY', 'babbb951d220490a81cccfd354d348c2')
-TG_TOKEN = os.environ.get('TG_TOKEN', '8947905331:AAGq8NINPfkVHgpQU2muN8G690qMhm0xR6M')
-TG_CHAT = os.environ.get('TG_CHAT', '1673781813')
-
-# ── Alpaca Paper Trading ──────────────────────────────────────────────────────
-ALPACA_KEY    = os.environ.get('ALPACA_KEY', '')
-ALPACA_SECRET = os.environ.get('ALPACA_SECRET', '')
-ALPACA_BASE   = 'https://paper-api.alpaca.markets/v2'
+NEWS_API_KEY      = os.environ.get('NEWS_API_KEY', 'babbb951d220490a81cccfd354d348c2')
+TG_TOKEN          = os.environ.get('TG_TOKEN', '8947905331:AAGq8NINPfkVHgpQU2muN8G690qMhm0xR6M')
+TG_CHAT           = os.environ.get('TG_CHAT', '1673781813')
+ALPACA_KEY        = os.environ.get('ALPACA_KEY', '')
+ALPACA_SECRET     = os.environ.get('ALPACA_SECRET', '')
+ALPACA_BASE       = 'https://paper-api.alpaca.markets/v2'
 # ─────────────────────────────────────────────────────────────────────────────
 
-last_signal = None
+# ── Estado global ─────────────────────────────────────────────────────────────
+last_signal        = None
+alerts_only_mode   = False   # True = solo alertas, sin ejecutar órdenes
+trades_today       = 0
+trades_today_date  = None
+MAX_TRADES_DAY     = 10
+equity_start_day   = None    # Equity al inicio del día para calcular drawdown
+capital_history    = []      # [{time, equity}] para gráfico evolución
+# ─────────────────────────────────────────────────────────────────────────────
+
+def alpaca_headers():
+    return {
+        'APCA-API-KEY-ID': ALPACA_KEY,
+        'APCA-API-SECRET-KEY': ALPACA_SECRET,
+        'Content-Type': 'application/json'
+    }
 
 def send_telegram(msg):
     try:
@@ -39,6 +54,7 @@ def send_telegram(msg):
     except Exception as e:
         print(f"Telegram error: {e}")
 
+# ── Precio y datos de mercado ─────────────────────────────────────────────────
 def fetch_gold_price():
     try:
         r = requests.get('https://api.gold-api.com/price/XAU', timeout=10)
@@ -65,6 +81,7 @@ def fetch_news():
     except:
         return []
 
+# ── Análisis IA ───────────────────────────────────────────────────────────────
 def analyze_signal(price, dxy, news):
     news_text = '\n'.join([f'{i+1}. {n}' for i, n in enumerate(news)]) if news else 'Sin noticias'
     prompt = f"""Eres analista experto en XAU/USD. Analiza y genera señal de trading.
@@ -90,159 +107,294 @@ Responde SOLO JSON sin backticks:
         raise Exception(f'API error {r.status_code}')
     text = ''.join([b.get('text','') for b in r.json().get('content',[])])
     text = text.strip().replace('```json','').replace('```','').strip()
-    import re
     match = re.search(r'\{[\s\S]*\}', text)
     if not match:
         raise Exception('No JSON in response')
     return json.loads(match.group(0))
 
+# ── Alpaca: obtener equity ────────────────────────────────────────────────────
+def get_alpaca_equity():
+    try:
+        r = requests.get(f'{ALPACA_BASE}/account', headers=alpaca_headers(), timeout=10)
+        return float(r.json().get('equity', 0))
+    except:
+        return 0.0
+
+# ── Alpaca: cerrar todas las posiciones ──────────────────────────────────────
+def close_all_positions(reason='Señal cambiada'):
+    if not ALPACA_KEY:
+        return
+    try:
+        positions = requests.get(f'{ALPACA_BASE}/positions', headers=alpaca_headers(), timeout=10).json()
+        if not positions:
+            return
+        for pos in positions:
+            symbol = pos.get('symbol')
+            qty    = abs(float(pos.get('qty', 0)))
+            side   = pos.get('side')  # 'long' o 'short'
+            close_side = 'sell' if side == 'long' else 'buy'
+            pl     = float(pos.get('unrealized_pl', 0))
+
+            requests.post(
+                f'{ALPACA_BASE}/orders',
+                headers=alpaca_headers(),
+                json={'symbol': symbol, 'qty': str(int(qty)), 'side': close_side, 'type': 'market', 'time_in_force': 'day'},
+                timeout=10
+            )
+            emoji = '💚' if pl >= 0 else '❤️'
+            send_telegram(
+                f"{emoji} *POSICIÓN CERRADA*\n\n"
+                f"📌 *Símbolo:* {symbol}\n"
+                f"📦 *Cantidad:* {int(qty)} acciones\n"
+                f"{'✅' if pl >= 0 else '❌'} *P&L:* ${pl:+.2f}\n"
+                f"📝 *Motivo:* {reason}\n\n"
+                f"📱 [Ver en Alpaca](https://app.alpaca.markets)"
+            )
+            print(f"[Alpaca] Cerrada posición {symbol} — P&L ${pl:+.2f}")
+    except Exception as e:
+        print(f"[Alpaca] Error cerrando posiciones: {e}")
+
 # ── Alpaca: ejecutar orden ────────────────────────────────────────────────────
 def execute_alpaca_order(signal, confidence, sl_price, tp_price):
-    """Ejecuta orden en Alpaca Paper Trading usando GLD (ETF oro ~1:1 con XAU)"""
+    global trades_today, trades_today_date, equity_start_day
+
     if not ALPACA_KEY or not ALPACA_SECRET:
-        print("[Alpaca] Credenciales no configuradas — saltando orden")
+        print("[Alpaca] Credenciales no configuradas")
+        return None
+
+    if alerts_only_mode:
+        print("[Alpaca] Modo solo alertas — orden no ejecutada")
+        send_telegram("ℹ️ *Modo solo alertas activo* — señal detectada pero sin ejecutar orden.")
         return None
 
     if confidence < 65:
         print(f"[Alpaca] Confianza {confidence}% < 65% — orden no ejecutada")
         return None
 
-    headers = {
-        'APCA-API-KEY-ID': ALPACA_KEY,
-        'APCA-API-SECRET-KEY': ALPACA_SECRET,
-        'Content-Type': 'application/json'
-    }
+    # Límite de trades por día
+    today = datetime.now(timezone.utc).date()
+    if trades_today_date != today:
+        trades_today = 0
+        trades_today_date = today
+
+    if trades_today >= MAX_TRADES_DAY:
+        send_telegram(f"⛔ *Límite diario alcanzado*: {MAX_TRADES_DAY} trades hoy. Bot en pausa hasta mañana.")
+        print(f"[Alpaca] Límite {MAX_TRADES_DAY} trades/día alcanzado")
+        return None
 
     try:
-        # Verificar cuenta
-        account_resp = requests.get(f'{ALPACA_BASE}/account', headers=headers, timeout=10)
-        account = account_resp.json()
-        equity = float(account.get('equity', 0))
+        account = requests.get(f'{ALPACA_BASE}/account', headers=alpaca_headers(), timeout=10).json()
+        equity  = float(account.get('equity', 0))
 
         if equity <= 0:
-            print("[Alpaca] Sin fondos disponibles")
             return None
 
-        # Obtener precio GLD para calcular unidades
-        quote_resp = requests.get(
-            f'{ALPACA_BASE}/stocks/GLD/quotes/latest',
-            headers=headers,
-            timeout=10
-        )
-        quote_data = quote_resp.json()
-        gld_price = float(quote_data.get('quote', {}).get('ap', 200))
-        if gld_price <= 0:
-            gld_price = 200.0  # fallback
+        # Guardar equity inicio del día
+        if equity_start_day is None:
+            equity_start_day = equity
 
-        # Riesgo 1% del capital
+        # Control drawdown: parar si pierde >5% del día
+        if equity_start_day > 0:
+            drawdown = (equity_start_day - equity) / equity_start_day * 100
+            if drawdown >= 5.0:
+                send_telegram(
+                    f"🚨 *BOT PAUSADO — DRAWDOWN DIARIO*\n\n"
+                    f"Pérdida del día: *{drawdown:.1f}%*\n"
+                    f"Capital inicio: ${equity_start_day:,.2f}\n"
+                    f"Capital actual: ${equity:,.2f}\n\n"
+                    f"El bot no ejecutará más órdenes hoy.\n"
+                    f"📱 [Ver en Alpaca](https://app.alpaca.markets)"
+                )
+                print(f"[Alpaca] Drawdown {drawdown:.1f}% — bot pausado")
+                return None
+
+        # Precio GLD
+        quote_resp = requests.get(f'{ALPACA_BASE}/stocks/GLD/quotes/latest', headers=alpaca_headers(), timeout=10)
+        gld_price  = float(quote_resp.json().get('quote', {}).get('ap', 200))
+        if gld_price <= 0:
+            gld_price = 200.0
+
+        # 1% riesgo por operación
         risk_amount = equity * 0.01
         qty = max(1, int(risk_amount / gld_price))
-
         side = 'buy' if signal == 'COMPRAR' else 'sell'
-
-        order_data = {
-            'symbol': 'GLD',
-            'qty': str(qty),
-            'side': side,
-            'type': 'market',
-            'time_in_force': 'day'
-        }
 
         order_resp = requests.post(
             f'{ALPACA_BASE}/orders',
-            headers=headers,
-            json=order_data,
+            headers=alpaca_headers(),
+            json={'symbol': 'GLD', 'qty': str(qty), 'side': side, 'type': 'market', 'time_in_force': 'day'},
             timeout=10
         )
-        order = order_resp.json()
-        order_id = order.get('id', 'N/A')
+        order        = order_resp.json()
+        order_id     = order.get('id', 'N/A')
         order_status = order.get('status', 'unknown')
 
+        trades_today += 1
+
         emoji = '🟢' if side == 'buy' else '🔴'
-        msg = (
+        send_telegram(
             f"{emoji} *ORDEN ALPACA EJECUTADA*\n\n"
             f"📌 *Acción:* {'COMPRA' if side == 'buy' else 'VENTA'} GLD\n"
             f"📦 *Cantidad:* {qty} acciones\n"
             f"📊 *Confianza IA:* {confidence}%\n"
-            f"💰 *Capital cuenta:* ${equity:,.2f}\n"
-            f"🆔 *ID Orden:* `{order_id}`\n"
+            f"💰 *Capital:* ${equity:,.2f}\n"
+            f"📈 *Trades hoy:* {trades_today}/{MAX_TRADES_DAY}\n"
+            f"🆔 *ID:* `{order_id}`\n"
             f"✅ *Estado:* {order_status}\n\n"
             f"_GLD = ETF que sigue el precio del oro_\n\n"
             f"📱 [Ver en Alpaca](https://app.alpaca.markets)"
         )
-        send_telegram(msg)
-        print(f"[Alpaca] Orden ejecutada: {order_id} ({order_status})")
+        print(f"[Alpaca] Orden ejecutada: {order_id} ({order_status}) — trade {trades_today}/{MAX_TRADES_DAY}")
+
+        # Guardar en historial capital
+        capital_history.append({'time': datetime.now(timezone.utc).isoformat(), 'equity': equity})
+        if len(capital_history) > 500:
+            capital_history.pop(0)
+
         return order_id
 
     except Exception as e:
-        error_msg = f"❌ *Error Alpaca*: {str(e)}"
         print(f"[Alpaca] Error: {traceback.format_exc()}")
-        send_telegram(error_msg)
+        send_telegram(f"❌ *Error Alpaca*: {str(e)}")
         return None
-# ─────────────────────────────────────────────────────────────────────────────
 
+# ── Monitor de posiciones (pérdida >2%) ──────────────────────────────────────
+def monitor_positions():
+    if not ALPACA_KEY:
+        return
+    try:
+        positions = requests.get(f'{ALPACA_BASE}/positions', headers=alpaca_headers(), timeout=10).json()
+        for pos in positions:
+            pl_pct = float(pos.get('unrealized_plpc', 0)) * 100
+            symbol = pos.get('symbol')
+            pl     = float(pos.get('unrealized_pl', 0))
+            if pl_pct <= -2.0:
+                send_telegram(
+                    f"⚠️ *ALERTA POSICIÓN EN PÉRDIDA*\n\n"
+                    f"📌 *Símbolo:* {symbol}\n"
+                    f"❌ *P&L:* ${pl:+.2f} ({pl_pct:.1f}%)\n\n"
+                    f"Considera revisar si cerrar la posición.\n"
+                    f"📱 [Ver en Alpaca](https://app.alpaca.markets)"
+                )
+                print(f"[Monitor] {symbol} en pérdida {pl_pct:.1f}%")
+    except Exception as e:
+        print(f"[Monitor] Error: {e}")
+
+# ── Resumen diario 8:00 UTC ───────────────────────────────────────────────────
+def daily_summary():
+    global equity_start_day, trades_today, trades_today_date
+    try:
+        account   = requests.get(f'{ALPACA_BASE}/account', headers=alpaca_headers(), timeout=10).json()
+        equity    = float(account.get('equity', 0))
+        cash      = float(account.get('cash', 0))
+        positions = requests.get(f'{ALPACA_BASE}/positions', headers=alpaca_headers(), timeout=10).json()
+        orders    = requests.get(f'{ALPACA_BASE}/orders?status=closed&limit=20', headers=alpaca_headers(), timeout=10).json()
+
+        # Calcular P&L del día
+        pl_day = equity - equity_start_day if equity_start_day else 0
+        pl_pct = (pl_day / equity_start_day * 100) if equity_start_day else 0
+
+        # Contar wins/losses del día
+        wins   = sum(1 for o in orders if float(o.get('filled_avg_price', 0)) > 0)
+        pos_txt = f"{len(positions)} posición(es) abierta(s)" if positions else "Sin posiciones abiertas"
+
+        send_telegram(
+            f"📊 *RESUMEN DIARIO AURUM v2*\n"
+            f"_{datetime.now(timezone.utc).strftime('%d/%m/%Y · %H:%M UTC')}_\n\n"
+            f"💰 *Capital:* ${equity:,.2f}\n"
+            f"💵 *Cash:* ${cash:,.2f}\n"
+            f"{'✅' if pl_day >= 0 else '❌'} *P&L hoy:* ${pl_day:+.2f} ({pl_pct:+.1f}%)\n"
+            f"📈 *Trades hoy:* {trades_today}/{MAX_TRADES_DAY}\n"
+            f"📌 *{pos_txt}*\n\n"
+            f"📱 [Ver en Alpaca](https://app.alpaca.markets)"
+        )
+
+        # Resetear contadores del día
+        equity_start_day   = equity
+        trades_today       = 0
+        trades_today_date  = datetime.now(timezone.utc).date()
+        print("[Daily] Resumen enviado y contadores reseteados")
+
+    except Exception as e:
+        print(f"[Daily] Error: {e}")
+
+# ── Análisis automático cada 15 min ──────────────────────────────────────────
 def auto_analysis():
     global last_signal
     print(f"[{datetime.now()}] Running auto analysis...")
     try:
         price = fetch_gold_price()
-        dxy = fetch_dxy()
-        news = fetch_news()
-        sig = analyze_signal(price, dxy, news)
+        dxy   = fetch_dxy()
+        news  = fetch_news()
+        sig   = analyze_signal(price, dxy, news)
 
-        confidence = sig.get('confidence', 0)
+        confidence  = sig.get('confidence', 0)
         signal_type = sig.get('signal', 'ESPERAR')
 
         print(f"Signal: {signal_type} ({confidence}%) | Last: {last_signal}")
 
-        # Send alert if signal changed and confidence >= 65
         if signal_type != 'ESPERAR' and confidence >= 65 and signal_type != last_signal:
+
+            # Si hay señal contraria, cerrar posiciones anteriores
+            if last_signal and last_signal != signal_type:
+                close_all_positions(reason=f'Señal cambió a {signal_type}')
+
             emoji = '🟢' if signal_type == 'COMPRAR' else '🔴'
-            msg = f"""{emoji} *AURUM v2 · XAU/USD*
-
-📌 *Acción:* {signal_type}
-💰 *Precio:* ${price['price']:.2f}
-🎯 *Entrada:* ${sig.get('entry', 0):.2f}
-✅ *TP:* ${sig.get('takeProfit', 0):.2f}
-🛑 *SL:* ${sig.get('stopLoss', 0):.2f}
-⚖️ *R:R:* {sig.get('rrRatio', 0):.1f}:1
-📊 *Confianza:* {confidence}%
-⏱ *Horizonte:* {sig.get('timeframe', 'intradía')}
-
-💬 _{sig.get('reasoning', '')}_
-
-_⚠️ No es asesoramiento financiero._"""
-            send_telegram(msg)
+            send_telegram(
+                f"{emoji} *AURUM v2 · XAU/USD*\n\n"
+                f"📌 *Acción:* {signal_type}\n"
+                f"💰 *Precio:* ${price['price']:.2f}\n"
+                f"🎯 *Entrada:* ${sig.get('entry', 0):.2f}\n"
+                f"✅ *TP:* ${sig.get('takeProfit', 0):.2f}\n"
+                f"🛑 *SL:* ${sig.get('stopLoss', 0):.2f}\n"
+                f"⚖️ *R:R:* {sig.get('rrRatio', 0):.1f}:1\n"
+                f"📊 *Confianza:* {confidence}%\n"
+                f"⏱ *Horizonte:* {sig.get('timeframe', 'intradía')}\n\n"
+                f"💬 _{sig.get('reasoning', '')}_\n\n"
+                f"_⚠️ No es asesoramiento financiero._"
+            )
             last_signal = signal_type
             print(f"Alert sent: {signal_type}")
 
-            # ── Ejecutar orden en Alpaca ──────────────────────────────────
             execute_alpaca_order(
                 signal=signal_type,
                 confidence=confidence,
                 sl_price=sig.get('stopLoss', 0),
                 tp_price=sig.get('takeProfit', 0)
             )
-            # ─────────────────────────────────────────────────────────────
 
         elif signal_type == 'ESPERAR':
-            last_signal = None  # Reset so next real signal triggers alert
+            last_signal = None
+
+        # Monitor posiciones cada ciclo
+        monitor_positions()
 
     except Exception as e:
         print(f"Auto analysis error: {traceback.format_exc()}")
 
+# ── Scheduler principal ───────────────────────────────────────────────────────
 def scheduler():
-    # Wait 2 min after startup then run every 15 min
-    time.sleep(120)
-    while True:
-        auto_analysis()
-        time.sleep(900)  # 15 minutes
+    time.sleep(120)  # 2 min tras arranque
+    last_daily = None
 
-# Start scheduler in background thread
+    while True:
+        now_utc = datetime.now(timezone.utc)
+
+        # Resumen diario a las 8:00 UTC
+        if now_utc.hour == 8 and now_utc.minute < 15:
+            today = now_utc.date()
+            if last_daily != today:
+                daily_summary()
+                last_daily = today
+
+        auto_analysis()
+        time.sleep(900)  # 15 minutos
+
 scheduler_thread = threading.Thread(target=scheduler, daemon=True)
 scheduler_thread.start()
 print("Auto-scheduler started (every 15 min)")
 
+# ── Endpoints ─────────────────────────────────────────────────────────────────
 @app.route('/')
 def index():
     return send_from_directory('static', 'index.html')
@@ -252,8 +404,8 @@ def get_signal():
     if request.method == 'OPTIONS':
         return '', 200
     try:
-        data = request.json
-        prompt = data.get('prompt', '')
+        data     = request.json
+        prompt   = data.get('prompt', '')
         response = requests.post(
             'https://api.anthropic.com/v1/messages',
             headers={'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01'},
@@ -261,13 +413,10 @@ def get_signal():
             timeout=30
         )
         if response.status_code != 200:
-            print(f"Anthropic error {response.status_code}: {response.text}")
             return jsonify({'error': f'API error {response.status_code}: {response.text}'}), 500
-        result = response.json()
-        text = ''.join([b.get('text', '') for b in result.get('content', [])])
+        text = ''.join([b.get('text', '') for b in response.json().get('content', [])])
         return jsonify({'text': text})
     except Exception as e:
-        print(f"Exception: {traceback.format_exc()}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/news', methods=['GET', 'OPTIONS'])
@@ -275,56 +424,77 @@ def get_news():
     if request.method == 'OPTIONS':
         return '', 200
     try:
-        q = 'gold price OR "XAU/USD" OR "gold market" OR "Federal Reserve" OR inflation'
+        q   = 'gold price OR "XAU/USD" OR "gold market" OR "Federal Reserve" OR inflation'
         url = f'https://newsapi.org/v2/everything?q={requests.utils.quote(q)}&language=en&sortBy=publishedAt&pageSize=6&apiKey={NEWS_API_KEY}'
-        r = requests.get(url, timeout=10)
+        r   = requests.get(url, timeout=10)
         if not r.ok:
             return jsonify({'articles': [], 'error': f'NewsAPI {r.status_code}'}), 200
-        d = r.json()
-        articles = d.get('articles', [])
-        clean = [{'headline': a.get('title',''), 'source': a.get('source',{}).get('name',''), 'publishedAt': a.get('publishedAt','')} for a in articles]
+        articles = r.json().get('articles', [])
+        clean    = [{'headline': a.get('title',''), 'source': a.get('source',{}).get('name',''), 'publishedAt': a.get('publishedAt','')} for a in articles]
         return jsonify({'articles': clean})
     except Exception as e:
-        print(f"News error: {traceback.format_exc()}")
         return jsonify({'articles': [], 'error': str(e)}), 200
 
 @app.route('/api/status', methods=['GET'])
 def status():
     return jsonify({
-        'status': 'ok',
-        'scheduler': 'running',
-        'last_signal': last_signal,
-        'alpaca_configured': bool(ALPACA_KEY and ALPACA_SECRET),
-        'time': datetime.now().isoformat()
+        'status':             'ok',
+        'scheduler':          'running',
+        'last_signal':        last_signal,
+        'alerts_only_mode':   alerts_only_mode,
+        'trades_today':       trades_today,
+        'max_trades_day':     MAX_TRADES_DAY,
+        'alpaca_configured':  bool(ALPACA_KEY and ALPACA_SECRET),
+        'time':               datetime.now(timezone.utc).isoformat()
     })
 
 @app.route('/health', methods=['GET'])
 def health():
     return jsonify({'status': 'ok', 'key_set': bool(ANTHROPIC_API_KEY)})
 
-# ── Alpaca: estado de cuenta ──────────────────────────────────────────────────
 @app.route('/api/alpaca/status', methods=['GET'])
 def alpaca_status():
     if not ALPACA_KEY or not ALPACA_SECRET:
-        return jsonify({'error': 'Alpaca no configurado — añade ALPACA_KEY y ALPACA_SECRET en Railway'})
-    headers = {
-        'APCA-API-KEY-ID': ALPACA_KEY,
-        'APCA-API-SECRET-KEY': ALPACA_SECRET
-    }
+        return jsonify({'error': 'Alpaca no configurado'})
     try:
-        account  = requests.get(f'{ALPACA_BASE}/account',                          headers=headers, timeout=10).json()
-        positions= requests.get(f'{ALPACA_BASE}/positions',                        headers=headers, timeout=10).json()
-        orders   = requests.get(f'{ALPACA_BASE}/orders?status=all&limit=10',       headers=headers, timeout=10).json()
+        account   = requests.get(f'{ALPACA_BASE}/account',                    headers=alpaca_headers(), timeout=10).json()
+        positions = requests.get(f'{ALPACA_BASE}/positions',                  headers=alpaca_headers(), timeout=10).json()
+        orders    = requests.get(f'{ALPACA_BASE}/orders?status=all&limit=20', headers=alpaca_headers(), timeout=10).json()
+        equity    = float(account.get('equity', 0))
+        pl_day    = equity - equity_start_day if equity_start_day else 0
         return jsonify({
-            'equity':        account.get('equity'),
-            'cash':          account.get('cash'),
-            'buying_power':  account.get('buying_power'),
-            'positions':     positions,
-            'recent_orders': orders
+            'equity':          account.get('equity'),
+            'cash':            account.get('cash'),
+            'buying_power':    account.get('buying_power'),
+            'pl_day':          round(pl_day, 2),
+            'trades_today':    trades_today,
+            'alerts_only':     alerts_only_mode,
+            'positions':       positions,
+            'recent_orders':   orders,
+            'capital_history': capital_history[-50:]  # últimos 50 puntos para gráfico
         })
     except Exception as e:
         return jsonify({'error': str(e)})
-# ─────────────────────────────────────────────────────────────────────────────
+
+@app.route('/api/alpaca/mode', methods=['POST', 'OPTIONS'])
+def set_mode():
+    """Cambiar entre modo trading y modo solo alertas"""
+    global alerts_only_mode
+    if request.method == 'OPTIONS':
+        return '', 200
+    data             = request.json or {}
+    alerts_only_mode = bool(data.get('alerts_only', False))
+    mode_txt         = 'SOLO ALERTAS' if alerts_only_mode else 'TRADING ACTIVO'
+    send_telegram(f"⚙️ *Modo cambiado:* {mode_txt}")
+    return jsonify({'alerts_only_mode': alerts_only_mode, 'message': f'Modo: {mode_txt}'})
+
+@app.route('/api/alpaca/close_all', methods=['POST', 'OPTIONS'])
+def close_all():
+    """Cerrar todas las posiciones manualmente"""
+    if request.method == 'OPTIONS':
+        return '', 200
+    close_all_positions(reason='Cierre manual desde dashboard')
+    return jsonify({'message': 'Posiciones cerradas'})
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
