@@ -167,7 +167,8 @@ def execute_alpaca_order(signal, confidence, sl_price, tp_price):
             f"💰 *Capital cuenta:* ${equity:,.2f}\n"
             f"🆔 *ID Orden:* `{order_id}`\n"
             f"✅ *Estado:* {order_status}\n\n"
-            f"_GLD = ETF que sigue el precio del oro_"
+            f"_GLD = ETF que sigue el precio del oro_\n\n"
+            f"📱 [Ver en Alpaca](https://app.alpaca.markets)"
         )
         send_telegram(msg)
         print(f"[Alpaca] Orden ejecutada: {order_id} ({order_status})")
