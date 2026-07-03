@@ -44,6 +44,23 @@ def alpaca_headers():
         'Content-Type': 'application/json'
     }
 
+
+def is_market_open():
+    """Comprueba si el mercado USA está abierto via Alpaca /clock"""
+    try:
+        r = requests.get(f'{ALPACA_BASE}/clock', headers=alpaca_headers(), timeout=10)
+        if r.status_code == 200:
+            return r.json().get('is_open', False)
+    except:
+        pass
+    # Fallback manual
+    now = datetime.now(timezone.utc)
+    if now.weekday() >= 5:
+        return False
+    market_open  = now.replace(hour=13, minute=30, second=0, microsecond=0)
+    market_close = now.replace(hour=20, minute=0,  second=0, microsecond=0)
+    return market_open <= now <= market_close
+
 def send_telegram(msg):
     try:
         requests.post(
@@ -169,6 +186,11 @@ def execute_alpaca_order(signal, confidence, sl_price, tp_price):
 
     if confidence < 65:
         print(f"[Alpaca] Confianza {confidence}% < 65% — orden no ejecutada")
+        return None
+
+    # Comprobar horario de mercado
+    if not is_market_open():
+        print("[Alpaca] Mercado cerrado — orden no ejecutada")
         return None
 
     # Límite de trades por día
