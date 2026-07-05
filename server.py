@@ -29,12 +29,53 @@ ALPACA_BASE       = 'https://paper-api.alpaca.markets/v2'
 
 # ── Estado global ─────────────────────────────────────────────────────────────
 last_signal        = None
-alerts_only_mode   = False   # True = solo alertas, sin ejecutar órdenes
+last_signal_time   = None    # Timestamp de la última señal enviada
+SIGNAL_COOLDOWN_H  = 4       # Mínimo 4 horas entre señales iguales
+alerts_only_mode   = False
 trades_today       = 0
 trades_today_date  = None
 MAX_TRADES_DAY     = 10
-equity_start_day   = None    # Equity al inicio del día para calcular drawdown
-capital_history    = []      # [{time, equity}] para gráfico evolución
+equity_start_day   = None
+capital_history    = []
+STATE_FILE         = '/tmp/aurum_state.json'
+# ─────────────────────────────────────────────────────────────────────────────
+
+def load_state():
+    """Carga estado persistente al arrancar"""
+    global last_signal, last_signal_time
+    try:
+        if os.path.exists(STATE_FILE):
+            with open(STATE_FILE, 'r') as f:
+                s = json.load(f)
+            last_signal      = s.get('last_signal')
+            last_signal_time = s.get('last_signal_time')
+            print(f"[State] Cargado: last_signal={last_signal}")
+    except Exception as e:
+        print(f"[State] Error cargando: {e}")
+
+def save_state():
+    """Guarda estado para sobrevivir reinicios"""
+    try:
+        with open(STATE_FILE, 'w') as f:
+            json.dump({'last_signal': last_signal, 'last_signal_time': last_signal_time}, f)
+    except Exception as e:
+        print(f"[State] Error guardando: {e}")
+
+def should_send_alert(signal_type):
+    """Controla si hay que mandar alerta — evita spam"""
+    global last_signal, last_signal_time
+    # Señal diferente → siempre mandar
+    if signal_type != last_signal:
+        return True
+    # Misma señal → solo si pasaron más de 4h
+    if last_signal_time is None:
+        return True
+    try:
+        last_time = datetime.fromisoformat(last_signal_time)
+        hours_passed = (datetime.now(timezone.utc) - last_time).total_seconds() / 3600
+        return hours_passed >= SIGNAL_COOLDOWN_H
+    except:
+        return True
 # ─────────────────────────────────────────────────────────────────────────────
 
 def alpaca_headers():
@@ -355,7 +396,7 @@ def auto_analysis():
 
         print(f"Signal: {signal_type} ({confidence}%) | Last: {last_signal}")
 
-        if signal_type != 'ESPERAR' and confidence >= 65 and signal_type != last_signal:
+        if signal_type != 'ESPERAR' and confidence >= 65 and should_send_alert(signal_type):
 
             # Si hay señal contraria, cerrar posiciones anteriores
             if last_signal and last_signal != signal_type:
@@ -375,7 +416,9 @@ def auto_analysis():
                 f"💬 _{sig.get('reasoning', '')}_\n\n"
                 f"_⚠️ No es asesoramiento financiero._"
             )
-            last_signal = signal_type
+            last_signal      = signal_type
+            last_signal_time = datetime.now(timezone.utc).isoformat()
+            save_state()
             print(f"Alert sent: {signal_type}")
 
             execute_alpaca_order(
@@ -386,7 +429,9 @@ def auto_analysis():
             )
 
         elif signal_type == 'ESPERAR':
-            last_signal = None
+            last_signal      = None
+            last_signal_time = None
+            save_state()
 
         # Monitor posiciones cada ciclo
         monitor_positions()
@@ -411,6 +456,9 @@ def scheduler():
 
         auto_analysis()
         time.sleep(900)  # 15 minutos
+
+# Cargar estado persistente al arrancar
+load_state()
 
 scheduler_thread = threading.Thread(target=scheduler, daemon=True)
 scheduler_thread.start()
