@@ -17,7 +17,6 @@ def add_cors(response):
     response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
     return response
 
-# ── Credenciales ──────────────────────────────────────────────────────────────
 ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
 NEWS_API_KEY      = os.environ.get('NEWS_API_KEY', 'babbb951d220490a81cccfd354d348c2')
 TG_TOKEN          = os.environ.get('TG_TOKEN', '8947905331:AAGq8NINPfkVHgpQU2muN8G690qMhm0xR6M')
@@ -25,9 +24,7 @@ TG_CHAT           = os.environ.get('TG_CHAT', '1673781813')
 ALPACA_KEY        = os.environ.get('ALPACA_KEY', '')
 ALPACA_SECRET     = os.environ.get('ALPACA_SECRET', '')
 ALPACA_BASE       = 'https://paper-api.alpaca.markets/v2'
-# ─────────────────────────────────────────────────────────────────────────────
 
-# ── Estado global ─────────────────────────────────────────────────────────────
 last_signal        = None
 last_signal_time   = None
 SIGNAL_COOLDOWN_H  = 4
@@ -37,10 +34,8 @@ trades_today_date  = None
 MAX_TRADES_DAY     = 10
 equity_start_day   = None
 capital_history    = []
-# ─────────────────────────────────────────────────────────────────────────────
 
 def save_state_telegram():
-    """Guarda estado en Telegram (persiste entre reinicios de Railway)"""
     try:
         msg = f"__STATE__:{last_signal}:{last_signal_time or 'None'}"
         requests.post(
@@ -52,7 +47,6 @@ def save_state_telegram():
         pass
 
 def load_state_telegram():
-    """Recupera el último estado guardado desde Telegram"""
     global last_signal, last_signal_time
     try:
         r = requests.get(
@@ -61,7 +55,6 @@ def load_state_telegram():
             timeout=10
         )
         messages = r.json().get('result', [])
-        # Buscar el último mensaje __STATE__
         for update in reversed(messages):
             text = update.get('message', {}).get('text', '')
             if text.startswith('__STATE__:'):
@@ -75,7 +68,6 @@ def load_state_telegram():
         print(f"[State] Error cargando desde Telegram: {e}")
 
 def should_send_alert(signal_type):
-    """Evita spam — mínimo 4h entre señales iguales"""
     if signal_type != last_signal:
         return True
     if last_signal_time is None:
@@ -86,7 +78,6 @@ def should_send_alert(signal_type):
         return hours_passed >= SIGNAL_COOLDOWN_H
     except:
         return True
-# ─────────────────────────────────────────────────────────────────────────────
 
 def alpaca_headers():
     return {
@@ -95,16 +86,13 @@ def alpaca_headers():
         'Content-Type': 'application/json'
     }
 
-
 def is_market_open():
-    """Comprueba si el mercado USA está abierto via Alpaca /clock"""
     try:
         r = requests.get(f'{ALPACA_BASE}/clock', headers=alpaca_headers(), timeout=10)
         if r.status_code == 200:
             return r.json().get('is_open', False)
     except:
         pass
-    # Fallback manual
     now = datetime.now(timezone.utc)
     if now.weekday() >= 5:
         return False
@@ -122,7 +110,6 @@ def send_telegram(msg):
     except Exception as e:
         print(f"Telegram error: {e}")
 
-# ── Precio y datos de mercado ─────────────────────────────────────────────────
 def fetch_gold_price():
     try:
         r = requests.get('https://api.gold-api.com/price/XAU', timeout=10)
@@ -149,22 +136,16 @@ def fetch_news():
     except:
         return []
 
-# ── Análisis IA ───────────────────────────────────────────────────────────────
 def analyze_signal(price, dxy, news):
     news_text = '\n'.join([f'{i+1}. {n}' for i, n in enumerate(news)]) if news else 'Sin noticias'
     prompt = f"""Eres analista experto en XAU/USD. Analiza y genera señal de trading.
-
 PRECIO: ${price['price']:.2f} | Apertura: ${price['open']:.2f} | Cambio: {((price['price']-price['open'])/price['open']*100):.2f}%
 DXY: {dxy['value']:.2f} ({'+' if dxy['change']>=0 else ''}{dxy['change']:.2f})
-
 NOTICIAS:
 {news_text}
-
 CONTEXTO: Oro en zona $3800-4200, Fed con tasas 4.25-4.5%, bancos centrales comprando oro.
-
 Responde SOLO JSON sin backticks:
 {{"signal":"COMPRAR o VENDER o ESPERAR","confidence":número 40-93,"entry":número,"takeProfit":número,"stopLoss":número,"rrRatio":número,"reasoning":"2 frases en español","timeframe":"intradía o corto plazo"}}"""
-
     r = requests.post(
         'https://api.anthropic.com/v1/messages',
         headers={'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01'},
@@ -180,7 +161,6 @@ Responde SOLO JSON sin backticks:
         raise Exception('No JSON in response')
     return json.loads(match.group(0))
 
-# ── Alpaca: obtener equity ────────────────────────────────────────────────────
 def get_alpaca_equity():
     try:
         r = requests.get(f'{ALPACA_BASE}/account', headers=alpaca_headers(), timeout=10)
@@ -188,7 +168,6 @@ def get_alpaca_equity():
     except:
         return 0.0
 
-# ── Alpaca: cerrar todas las posiciones ──────────────────────────────────────
 def close_all_positions(reason='Señal cambiada'):
     if not ALPACA_KEY:
         return
@@ -199,10 +178,9 @@ def close_all_positions(reason='Señal cambiada'):
         for pos in positions:
             symbol = pos.get('symbol')
             qty    = abs(float(pos.get('qty', 0)))
-            side   = pos.get('side')  # 'long' o 'short'
+            side   = pos.get('side')
             close_side = 'sell' if side == 'long' else 'buy'
             pl     = float(pos.get('unrealized_pl', 0))
-
             requests.post(
                 f'{ALPACA_BASE}/orders',
                 headers=alpaca_headers(),
@@ -218,80 +196,46 @@ def close_all_positions(reason='Señal cambiada'):
                 f"📝 *Motivo:* {reason}\n\n"
                 f"📱 [Ver en Alpaca](https://app.alpaca.markets)"
             )
-            print(f"[Alpaca] Cerrada posición {symbol} — P&L ${pl:+.2f}")
     except Exception as e:
         print(f"[Alpaca] Error cerrando posiciones: {e}")
 
-# ── Alpaca: ejecutar orden ────────────────────────────────────────────────────
 def execute_alpaca_order(signal, confidence, sl_price, tp_price):
     global trades_today, trades_today_date, equity_start_day
-
     if not ALPACA_KEY or not ALPACA_SECRET:
-        print("[Alpaca] Credenciales no configuradas")
         return None
-
     if alerts_only_mode:
-        print("[Alpaca] Modo solo alertas — orden no ejecutada")
-        send_telegram("ℹ️ *Modo solo alertas activo* — señal detectada pero sin ejecutar orden.")
         return None
-
     if confidence < 65:
-        print(f"[Alpaca] Confianza {confidence}% < 65% — orden no ejecutada")
         return None
-
-    # Comprobar horario de mercado
     if not is_market_open():
         print("[Alpaca] Mercado cerrado — orden no ejecutada")
         return None
-
-    # Límite de trades por día
     today = datetime.now(timezone.utc).date()
     if trades_today_date != today:
         trades_today = 0
         trades_today_date = today
-
     if trades_today >= MAX_TRADES_DAY:
-        send_telegram(f"⛔ *Límite diario alcanzado*: {MAX_TRADES_DAY} trades hoy. Bot en pausa hasta mañana.")
-        print(f"[Alpaca] Límite {MAX_TRADES_DAY} trades/día alcanzado")
+        send_telegram(f"⛔ *Límite diario alcanzado*: {MAX_TRADES_DAY} trades hoy.")
         return None
-
     try:
         account = requests.get(f'{ALPACA_BASE}/account', headers=alpaca_headers(), timeout=10).json()
         equity  = float(account.get('equity', 0))
-
         if equity <= 0:
             return None
-
-        # Guardar equity inicio del día
         if equity_start_day is None:
             equity_start_day = equity
-
-        # Control drawdown: parar si pierde >5% del día
         if equity_start_day > 0:
             drawdown = (equity_start_day - equity) / equity_start_day * 100
             if drawdown >= 5.0:
-                send_telegram(
-                    f"🚨 *BOT PAUSADO — DRAWDOWN DIARIO*\n\n"
-                    f"Pérdida del día: *{drawdown:.1f}%*\n"
-                    f"Capital inicio: ${equity_start_day:,.2f}\n"
-                    f"Capital actual: ${equity:,.2f}\n\n"
-                    f"El bot no ejecutará más órdenes hoy.\n"
-                    f"📱 [Ver en Alpaca](https://app.alpaca.markets)"
-                )
-                print(f"[Alpaca] Drawdown {drawdown:.1f}% — bot pausado")
+                send_telegram(f"🚨 *BOT PAUSADO — DRAWDOWN {drawdown:.1f}%*\n\nCapital: ${equity:,.2f}\n📱 [Ver en Alpaca](https://app.alpaca.markets)")
                 return None
-
-        # Precio GLD
         quote_resp = requests.get(f'{ALPACA_BASE}/stocks/GLD/quotes/latest', headers=alpaca_headers(), timeout=10)
         gld_price  = float(quote_resp.json().get('quote', {}).get('ap', 200))
         if gld_price <= 0:
             gld_price = 200.0
-
-        # 1% riesgo por operación
         risk_amount = equity * 0.01
         qty = max(1, int(risk_amount / gld_price))
         side = 'buy' if signal == 'COMPRAR' else 'sell'
-
         order_resp = requests.post(
             f'{ALPACA_BASE}/orders',
             headers=alpaca_headers(),
@@ -301,9 +245,7 @@ def execute_alpaca_order(signal, confidence, sl_price, tp_price):
         order        = order_resp.json()
         order_id     = order.get('id', 'N/A')
         order_status = order.get('status', 'unknown')
-
         trades_today += 1
-
         emoji = '🟢' if side == 'buy' else '🔴'
         send_telegram(
             f"{emoji} *ORDEN ALPACA EJECUTADA*\n\n"
@@ -317,21 +259,14 @@ def execute_alpaca_order(signal, confidence, sl_price, tp_price):
             f"_GLD = ETF que sigue el precio del oro_\n\n"
             f"📱 [Ver en Alpaca](https://app.alpaca.markets)"
         )
-        print(f"[Alpaca] Orden ejecutada: {order_id} ({order_status}) — trade {trades_today}/{MAX_TRADES_DAY}")
-
-        # Guardar en historial capital
         capital_history.append({'time': datetime.now(timezone.utc).isoformat(), 'equity': equity})
         if len(capital_history) > 500:
             capital_history.pop(0)
-
         return order_id
-
     except Exception as e:
         print(f"[Alpaca] Error: {traceback.format_exc()}")
-        send_telegram(f"❌ *Error Alpaca*: {str(e)}")
         return None
 
-# ── Monitor de posiciones (pérdida >2%) ──────────────────────────────────────
 def monitor_positions():
     if not ALPACA_KEY:
         return
@@ -346,14 +281,11 @@ def monitor_positions():
                     f"⚠️ *ALERTA POSICIÓN EN PÉRDIDA*\n\n"
                     f"📌 *Símbolo:* {symbol}\n"
                     f"❌ *P&L:* ${pl:+.2f} ({pl_pct:.1f}%)\n\n"
-                    f"Considera revisar si cerrar la posición.\n"
                     f"📱 [Ver en Alpaca](https://app.alpaca.markets)"
                 )
-                print(f"[Monitor] {symbol} en pérdida {pl_pct:.1f}%")
     except Exception as e:
         print(f"[Monitor] Error: {e}")
 
-# ── Resumen diario 8:00 UTC ───────────────────────────────────────────────────
 def daily_summary():
     global equity_start_day, trades_today, trades_today_date
     try:
@@ -361,16 +293,9 @@ def daily_summary():
         equity    = float(account.get('equity', 0))
         cash      = float(account.get('cash', 0))
         positions = requests.get(f'{ALPACA_BASE}/positions', headers=alpaca_headers(), timeout=10).json()
-        orders    = requests.get(f'{ALPACA_BASE}/orders?status=closed&limit=20', headers=alpaca_headers(), timeout=10).json()
-
-        # Calcular P&L del día
         pl_day = equity - equity_start_day if equity_start_day else 0
         pl_pct = (pl_day / equity_start_day * 100) if equity_start_day else 0
-
-        # Contar wins/losses del día
-        wins   = sum(1 for o in orders if float(o.get('filled_avg_price', 0)) > 0)
         pos_txt = f"{len(positions)} posición(es) abierta(s)" if positions else "Sin posiciones abiertas"
-
         send_telegram(
             f"📊 *RESUMEN DIARIO AURUM v2*\n"
             f"_{datetime.now(timezone.utc).strftime('%d/%m/%Y · %H:%M UTC')}_\n\n"
@@ -381,37 +306,27 @@ def daily_summary():
             f"📌 *{pos_txt}*\n\n"
             f"📱 [Ver en Alpaca](https://app.alpaca.markets)"
         )
-
-        # Resetear contadores del día
         equity_start_day   = equity
         trades_today       = 0
         trades_today_date  = datetime.now(timezone.utc).date()
-        print("[Daily] Resumen enviado y contadores reseteados")
-
     except Exception as e:
         print(f"[Daily] Error: {e}")
 
-# ── Análisis automático cada 15 min ──────────────────────────────────────────
 def auto_analysis():
-    global last_signal
+    global last_signal, last_signal_time  # ← AQUÍ ESTABA EL BUG
     print(f"[{datetime.now()}] Running auto analysis...")
     try:
         price = fetch_gold_price()
         dxy   = fetch_dxy()
         news  = fetch_news()
         sig   = analyze_signal(price, dxy, news)
-
         confidence  = sig.get('confidence', 0)
         signal_type = sig.get('signal', 'ESPERAR')
-
-        print(f"Signal: {signal_type} ({confidence}%) | Last: {last_signal}")
+        print(f"Signal: {signal_type} ({confidence}%) | Last: {last_signal} | Should send: {should_send_alert(signal_type)}")
 
         if signal_type != 'ESPERAR' and confidence >= 65 and should_send_alert(signal_type):
-
-            # Si hay señal contraria, cerrar posiciones anteriores
             if last_signal and last_signal != signal_type:
                 close_all_positions(reason=f'Señal cambió a {signal_type}')
-
             emoji = '🟢' if signal_type == 'COMPRAR' else '🔴'
             send_telegram(
                 f"{emoji} *AURUM v2 · XAU/USD*\n\n"
@@ -429,52 +344,39 @@ def auto_analysis():
             last_signal      = signal_type
             last_signal_time = datetime.now(timezone.utc).isoformat()
             save_state_telegram()
-            print(f"Alert sent: {signal_type}")
-
+            print(f"Alert sent: {signal_type} at {last_signal_time}")
             execute_alpaca_order(
                 signal=signal_type,
                 confidence=confidence,
                 sl_price=sig.get('stopLoss', 0),
                 tp_price=sig.get('takeProfit', 0)
             )
-
         elif signal_type == 'ESPERAR':
             last_signal      = None
             last_signal_time = None
             save_state_telegram()
-
-        # Monitor posiciones cada ciclo
         monitor_positions()
-
     except Exception as e:
         print(f"Auto analysis error: {traceback.format_exc()}")
 
-# ── Scheduler principal ───────────────────────────────────────────────────────
 def scheduler():
-    time.sleep(120)  # 2 min tras arranque
+    time.sleep(120)
     last_daily = None
-
     while True:
         now_utc = datetime.now(timezone.utc)
-
-        # Resumen diario a las 8:00 UTC
         if now_utc.hour == 8 and now_utc.minute < 15:
             today = now_utc.date()
             if last_daily != today:
                 daily_summary()
                 last_daily = today
-
         auto_analysis()
-        time.sleep(900)  # 15 minutos
+        time.sleep(900)
 
-# Cargar estado persistente al arrancar
 load_state_telegram()
-
 scheduler_thread = threading.Thread(target=scheduler, daemon=True)
 scheduler_thread.start()
 print("Auto-scheduler started (every 15 min)")
 
-# ── Endpoints ─────────────────────────────────────────────────────────────────
 @app.route('/')
 def index():
     return send_from_directory('static', 'index.html')
@@ -521,6 +423,7 @@ def status():
         'status':             'ok',
         'scheduler':          'running',
         'last_signal':        last_signal,
+        'last_signal_time':   last_signal_time,
         'alerts_only_mode':   alerts_only_mode,
         'trades_today':       trades_today,
         'max_trades_day':     MAX_TRADES_DAY,
@@ -551,14 +454,13 @@ def alpaca_status():
             'alerts_only':     alerts_only_mode,
             'positions':       positions,
             'recent_orders':   orders,
-            'capital_history': capital_history[-50:]  # últimos 50 puntos para gráfico
+            'capital_history': capital_history[-50:]
         })
     except Exception as e:
         return jsonify({'error': str(e)})
 
 @app.route('/api/alpaca/mode', methods=['POST', 'OPTIONS'])
 def set_mode():
-    """Cambiar entre modo trading y modo solo alertas"""
     global alerts_only_mode
     if request.method == 'OPTIONS':
         return '', 200
@@ -570,7 +472,6 @@ def set_mode():
 
 @app.route('/api/alpaca/close_all', methods=['POST', 'OPTIONS'])
 def close_all():
-    """Cerrar todas las posiciones manualmente"""
     if request.method == 'OPTIONS':
         return '', 200
     close_all_positions(reason='Cierre manual desde dashboard')
