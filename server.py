@@ -29,45 +29,55 @@ ALPACA_BASE       = 'https://paper-api.alpaca.markets/v2'
 
 # ── Estado global ─────────────────────────────────────────────────────────────
 last_signal        = None
-last_signal_time   = None    # Timestamp de la última señal enviada
-SIGNAL_COOLDOWN_H  = 4       # Mínimo 4 horas entre señales iguales
+last_signal_time   = None
+SIGNAL_COOLDOWN_H  = 4
 alerts_only_mode   = False
 trades_today       = 0
 trades_today_date  = None
 MAX_TRADES_DAY     = 10
 equity_start_day   = None
 capital_history    = []
-STATE_FILE         = '/tmp/aurum_state.json'
 # ─────────────────────────────────────────────────────────────────────────────
 
-def load_state():
-    """Carga estado persistente al arrancar"""
+def save_state_telegram():
+    """Guarda estado en Telegram (persiste entre reinicios de Railway)"""
+    try:
+        msg = f"__STATE__:{last_signal}:{last_signal_time or 'None'}"
+        requests.post(
+            f'https://api.telegram.org/bot{TG_TOKEN}/sendMessage',
+            json={'chat_id': TG_CHAT, 'text': msg},
+            timeout=10
+        )
+    except:
+        pass
+
+def load_state_telegram():
+    """Recupera el último estado guardado desde Telegram"""
     global last_signal, last_signal_time
     try:
-        if os.path.exists(STATE_FILE):
-            with open(STATE_FILE, 'r') as f:
-                s = json.load(f)
-            last_signal      = s.get('last_signal')
-            last_signal_time = s.get('last_signal_time')
-            print(f"[State] Cargado: last_signal={last_signal}")
+        r = requests.get(
+            f'https://api.telegram.org/bot{TG_TOKEN}/getUpdates',
+            params={'limit': 100, 'offset': -100},
+            timeout=10
+        )
+        messages = r.json().get('result', [])
+        # Buscar el último mensaje __STATE__
+        for update in reversed(messages):
+            text = update.get('message', {}).get('text', '')
+            if text.startswith('__STATE__:'):
+                parts = text.split(':')
+                if len(parts) >= 3:
+                    last_signal = parts[1] if parts[1] != 'None' else None
+                    last_signal_time = parts[2] if parts[2] != 'None' else None
+                    print(f"[State] Recuperado: last_signal={last_signal} last_time={last_signal_time}")
+                    return
     except Exception as e:
-        print(f"[State] Error cargando: {e}")
-
-def save_state():
-    """Guarda estado para sobrevivir reinicios"""
-    try:
-        with open(STATE_FILE, 'w') as f:
-            json.dump({'last_signal': last_signal, 'last_signal_time': last_signal_time}, f)
-    except Exception as e:
-        print(f"[State] Error guardando: {e}")
+        print(f"[State] Error cargando desde Telegram: {e}")
 
 def should_send_alert(signal_type):
-    """Controla si hay que mandar alerta — evita spam"""
-    global last_signal, last_signal_time
-    # Señal diferente → siempre mandar
+    """Evita spam — mínimo 4h entre señales iguales"""
     if signal_type != last_signal:
         return True
-    # Misma señal → solo si pasaron más de 4h
     if last_signal_time is None:
         return True
     try:
@@ -418,7 +428,7 @@ def auto_analysis():
             )
             last_signal      = signal_type
             last_signal_time = datetime.now(timezone.utc).isoformat()
-            save_state()
+            save_state_telegram()
             print(f"Alert sent: {signal_type}")
 
             execute_alpaca_order(
@@ -431,7 +441,7 @@ def auto_analysis():
         elif signal_type == 'ESPERAR':
             last_signal      = None
             last_signal_time = None
-            save_state()
+            save_state_telegram()
 
         # Monitor posiciones cada ciclo
         monitor_positions()
@@ -458,7 +468,7 @@ def scheduler():
         time.sleep(900)  # 15 minutos
 
 # Cargar estado persistente al arrancar
-load_state()
+load_state_telegram()
 
 scheduler_thread = threading.Thread(target=scheduler, daemon=True)
 scheduler_thread.start()
