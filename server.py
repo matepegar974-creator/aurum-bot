@@ -352,9 +352,10 @@ def auto_analysis():
                 tp_price=sig.get('takeProfit', 0)
             )
         elif signal_type == 'ESPERAR':
-            last_signal      = None
-            last_signal_time = None
-            save_state_telegram()
+            if last_signal is not None:  # Solo si cambia (evita spam cada 15 min)
+                last_signal      = None
+                last_signal_time = None
+                save_state_telegram()
         monitor_positions()
     except Exception as e:
         print(f"Auto analysis error: {traceback.format_exc()}")
